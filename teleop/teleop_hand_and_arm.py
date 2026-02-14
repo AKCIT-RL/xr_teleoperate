@@ -106,26 +106,21 @@ if __name__ == '__main__':
             listen_keyboard_thread.start()
 
         # image client: img_config should be the same as the configuration in image_server.py (of Robot's development computing unit)
+        # using only head camera image by default, you can change it to use wrist camera image or both images by changing the configuration in both this script and image_server.py
         if args.sim:
             img_config = {
                 'fps': 30,
                 'head_camera_type': 'opencv',
                 'head_camera_image_shape': [480, 640],  # Head camera resolution
-                'head_camera_id_numbers': [0],
-                'wrist_camera_type': 'opencv',
-                'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
+                'head_camera_id_numbers': [0]
             }
         else:
             img_config = {
                 'fps': 30,
                 'head_camera_type': 'opencv',
-                'head_camera_image_shape': [480, 1280],  # Head camera resolution
-                'head_camera_id_numbers': [0],
-                'wrist_camera_type': 'opencv',
-                'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-                'wrist_camera_id_numbers': [2, 4],
-            }
+                'head_camera_image_shape': [480, 640],  # Head camera resolution
+                'head_camera_id_numbers': [0]
+             }
 
 
         ASPECT_RATIO_THRESHOLD = 2.0 # If the aspect ratio exceeds this value, it is considered binocular
@@ -138,6 +133,8 @@ if __name__ == '__main__':
         else:
             WRIST = False
         
+        # print(f"BINOCULAR  = {BINOCULAR}")
+        
         if BINOCULAR and not (img_config['head_camera_image_shape'][1] / img_config['head_camera_image_shape'][0] > ASPECT_RATIO_THRESHOLD):
             tv_img_shape = (img_config['head_camera_image_shape'][0], img_config['head_camera_image_shape'][1] * 2, 3)
         else:
@@ -147,13 +144,13 @@ if __name__ == '__main__':
         tv_img_array = np.ndarray(tv_img_shape, dtype = np.uint8, buffer = tv_img_shm.buf)
 
         if WRIST and args.sim:
-            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1] * 2, 3)
+            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1], 3)
             wrist_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(wrist_img_shape) * np.uint8().itemsize)
             wrist_img_array = np.ndarray(wrist_img_shape, dtype = np.uint8, buffer = wrist_img_shm.buf)
             img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = tv_img_shm.name, 
                                     wrist_img_shape = wrist_img_shape, wrist_img_shm_name = wrist_img_shm.name, server_address="127.0.0.1")
         elif WRIST and not args.sim:
-            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1] * 2, 3)
+            wrist_img_shape = (img_config['wrist_camera_image_shape'][0], img_config['wrist_camera_image_shape'][1], 3)
             wrist_img_shm = shared_memory.SharedMemory(create = True, size = np.prod(wrist_img_shape) * np.uint8().itemsize)
             wrist_img_array = np.ndarray(wrist_img_shape, dtype = np.uint8, buffer = wrist_img_shm.buf)
             img_client = ImageClient(tv_img_shape = tv_img_shape, tv_img_shm_name = tv_img_shm.name, 
@@ -244,6 +241,7 @@ if __name__ == '__main__':
         # controller + motion mode
         if args.xr_mode == "controller" and args.motion:
             from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
+            # print("#################################\n Initializing LocoClient\n#################################")
             sport_client = LocoClient()
             sport_client.SetTimeout(0.0001)
             sport_client.Init()
@@ -324,6 +322,9 @@ if __name__ == '__main__':
                 sport_client.Move(-tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
                                   -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
                                   -tele_data.tele_state.right_thumbstick_value[0] * 0.3)
+                # print(-tele_data.tele_state.left_thumbstick_value[1])
+                # print(-tele_data.tele_state.left_thumbstick_value[0])
+                # print(-tele_data.tele_state.right_thumbstick_value[0])
 
             # get current robot state data.
             current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
@@ -490,3 +491,7 @@ if __name__ == '__main__':
             recorder.close()
         logger_mp.info("Finally, exiting program.")
         exit(0)
+
+
+# python teleop_hand_and_arm.py --xr-mode=controller --arm=G1_29 --motion  | whole body control, must be used in robot regular mode
+# python teleop_hand_and_arm.py --xr-mode=controller --arm=G1_29  | arm control, must be used debug mode 

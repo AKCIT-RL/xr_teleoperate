@@ -159,6 +159,9 @@ class ImageClient:
                     continue
 
                 if self.tv_enable_shm:
+                    # logger_mp.info(current_image.shape: {}".format(current_image.shape))
+                    # logger_mp.info("tv_img_shape: {}".format(self.tv_img_shape))
+                    # logger_mp.info(tv_img_array.shape: {}".format(self.tv_img_array.shape))
                     np.copyto(self.tv_img_array, np.array(current_image[:, :self.tv_img_shape[1]]))
                 
                 if self.wrist_enable_shm:

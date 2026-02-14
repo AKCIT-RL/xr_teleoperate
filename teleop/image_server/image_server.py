@@ -8,6 +8,76 @@ import pyrealsense2 as rs
 import logging_mp
 logger_mp = logging_mp.get_logger(__name__, level=logging_mp.DEBUG)
 
+class RealsenseCameraStereo(object):
+    def __init__(self, img_shape, fps, serial_number=None) -> None:
+        """
+        Configures RealSense to capture the infrared stereo pair and concatenate it.
+        
+        Args:
+            img_shape: [height, TOTAL_width] -> Ex: [480, 1280]
+            fps: frames per second (ex: 30)
+            serial_number: camera serial (optional if only one is connected)
+        """
+        self.height = img_shape[0]       # 480
+        self.total_width = img_shape[1]  # 1280
+        self.fps = fps
+        self.serial_number = serial_number
+
+        # Calculates the resolution of EACH sensor (half the total width)
+        self.sensor_width = self.total_width // 2 # 640
+        
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+
+        if self.serial_number is not None:
+            self.config.enable_device(self.serial_number)
+
+        # Enables the two infrared "eyes"
+        # We use format.y8 (grayscale) as it is native to the IR sensor
+        self.config.enable_stream(rs.stream.infrared, 1, self.sensor_width, self.height, rs.format.y8, self.fps)
+        self.config.enable_stream(rs.stream.infrared, 2, self.sensor_width, self.height, rs.format.y8, self.fps)
+
+        # Starts the camera
+        profile = self.pipeline.start(self.config)
+
+        # (Optional) Disables the laser emitter to clean up the image (without dots)
+        device = profile.get_device()
+        depth_sensor = device.first_depth_sensor()
+        if depth_sensor.supports(rs.option.emitter_enabled):
+            depth_sensor.set_option(rs.option.emitter_enabled, 0) # 0 = Off
+
+    def get_frame(self):
+        """
+        Returns:
+            color_image: Image of 1280x480 (Left + Right concatenated) in BGR format
+            depth_image: None (not used in this mode)
+        """
+        frames = self.pipeline.wait_for_frames()
+
+        # Gets frames from left and right
+        ir_frame_left = frames.get_infrared_frame(1)
+        ir_frame_right = frames.get_infrared_frame(2)
+
+        if not ir_frame_left or not ir_frame_right:
+            return None, None
+
+        # Converts to numpy array
+        image_left = np.asanyarray(ir_frame_left.get_data())
+        image_right = np.asanyarray(ir_frame_right.get_data())
+
+        # 1. Horizontal Concatenation (The immersion magic)
+        stereo_image_gray = np.hstack((image_left, image_right))
+
+        # 2. Conversion to BGR
+        # The server expects 3 channels (Color). Even though the image is B&W,
+        # we convert to BGR to ensure compatibility with cv2.imencode/video players.
+        stereo_image_bgr = cv2.cvtColor(stereo_image_gray, cv2.COLOR_GRAY2BGR)
+
+        # Returns in the format (color, depth) that the server expects
+        return stereo_image_bgr, None
+
+    def release(self):
+        self.pipeline.stop()
 
 class RealSenseCamera(object):
     def __init__(self, img_shape, fps, serial_number=None, enable_depth=False) -> None:
@@ -162,6 +232,10 @@ class ImageServer:
             for serial_number in self.head_camera_id_numbers:
                 camera = RealSenseCamera(img_shape=self.head_image_shape, fps=self.fps, serial_number=serial_number)
                 self.head_cameras.append(camera)
+        elif self.head_camera_type == 'realsense_stereo':
+            for serial_number in self.head_camera_id_numbers:
+                camera = RealsenseCameraStereo(img_shape=self.head_image_shape, fps=self.fps, serial_number=serial_number)
+                self.head_cameras.append(camera)
         else:
             logger_mp.warning(f"[Image Server] Unsupported head_camera_type: {self.head_camera_type}")
 
@@ -192,6 +266,8 @@ class ImageServer:
                 logger_mp.info(f"[Image Server] Head camera {cam.id} resolution: {cam.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)} x {cam.cap.get(cv2.CAP_PROP_FRAME_WIDTH)}")
             elif isinstance(cam, RealSenseCamera):
                 logger_mp.info(f"[Image Server] Head camera {cam.serial_number} resolution: {cam.img_shape[0]} x {cam.img_shape[1]}")
+            elif isinstance(cam, RealsenseCameraStereo):
+                logger_mp.info(f"[Image Server] Head stereo camera {cam.serial_number} resolution: {cam.img_shape[0]} x {cam.img_shape[1]} (Left+Right concatenated)")
             else:
                 logger_mp.warning("[Image Server] Unknown camera type in head_cameras.")
 
@@ -248,9 +324,14 @@ class ImageServer:
                             logger_mp.error("[Image Server] Head camera frame read is error.")
                             break
                     elif self.head_camera_type == 'realsense':
-                        color_image, depth_iamge = cam.get_frame()
+                        color_image, depth_image = cam.get_frame()
                         if color_image is None:
                             logger_mp.error("[Image Server] Head camera frame read is error.")
+                            break
+                    elif self.head_camera_type == 'realsense_stereo':
+                        color_image, depth_image = cam.get_frame()
+                        if color_image is None:
+                            logger_mp.error("[Image Server] Head stereo camera frame read is error.")
                             break
                     head_frames.append(color_image)
                 if len(head_frames) != len(self.head_cameras):
@@ -266,7 +347,7 @@ class ImageServer:
                                 logger_mp.error("[Image Server] Wrist camera frame read is error.")
                                 break
                         elif self.wrist_camera_type == 'realsense':
-                            color_image, depth_iamge = cam.get_frame()
+                            color_image, depth_image = cam.get_frame()
                             if color_image is None:
                                 logger_mp.error("[Image Server] Wrist camera frame read is error.")
                                 break
@@ -309,12 +390,9 @@ class ImageServer:
 if __name__ == "__main__":
     config = {
         'fps': 30,
-        'head_camera_type': 'opencv',
+        'head_camera_type': 'realsense_stereo',  # opencv, realsense or realsense_stereo
         'head_camera_image_shape': [480, 1280],  # Head camera resolution
-        'head_camera_id_numbers': [0],
-        'wrist_camera_type': 'opencv',
-        'wrist_camera_image_shape': [480, 640],  # Wrist camera resolution
-        'wrist_camera_id_numbers': [2, 4],
+        'head_camera_id_numbers': ["218622271739"] # realsense camera's serial number, adapt it to your own camera. You can find this on realsense viewer or by running rs-enumerate-devices in terminal
     }
 
     server = ImageServer(config, Unit_Test=False)

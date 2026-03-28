@@ -87,7 +87,11 @@ class G1_29_ArmController:
             ChannelFactoryInitialize(0)
 
         if self.motion_mode:
-            self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Motion, hg_LowCmd)
+            if self.simulation_mode:
+                self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
+            else:
+                self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Motion, hg_LowCmd)
+                
         else:
             self.lowcmd_publisher = ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
         self.lowcmd_publisher.Init()

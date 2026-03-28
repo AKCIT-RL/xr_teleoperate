@@ -240,11 +240,20 @@ if __name__ == '__main__':
 
         # controller + motion mode
         if args.xr_mode == "controller" and args.motion:
-            from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
-            # print("#################################\n Initializing LocoClient\n#################################")
-            sport_client = LocoClient()
-            sport_client.SetTimeout(0.0001)
-            sport_client.Init()
+            
+            if args.sim:
+                print("initializing DDS communication...")
+                sim_loco_publisher = ChannelPublisher("rt/run_command/cmd", String_)
+                sim_loco_publisher.Init()
+                print("DDS communication initialized")
+
+            else:
+
+                from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
+                # print("#################################\n Initializing LocoClient\n#################################")
+                sport_client = LocoClient()
+                sport_client.SetTimeout(0.0001)
+                sport_client.Init()
         
         # record + headless mode
         if args.record and args.headless:
@@ -315,16 +324,29 @@ if __name__ == '__main__':
                 if tele_data.tele_state.right_aButton:
                     START = False
                     STOP = True
-                # command robot to enter damping mode. soft emergency stop function
-                if tele_data.tele_state.left_thumbstick_state and tele_data.tele_state.right_thumbstick_state:
-                    sport_client.Damp()
-                # control, limit velocity to within 0.3
-                sport_client.Move(-tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
-                                  -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
-                                  -tele_data.tele_state.right_thumbstick_value[0] * 0.3)
-                # print(-tele_data.tele_state.left_thumbstick_value[1])
-                # print(-tele_data.tele_state.left_thumbstick_value[0])
-                # print(-tele_data.tele_state.right_thumbstick_value[0])
+
+                if args.sim:
+                    command_list = [
+                        -tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
+                        -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
+                        -tele_data.tele_state.right_thumbstick_value[0] * 0.3,
+                        0.8
+                    ]
+                    commands_str = str(command_list)
+                    msg = String_(data=commands_str)
+                    sim_loco_publisher.Write(msg)
+
+                else:
+                    # command robot to enter damping mode. soft emergency stop function
+                    if tele_data.tele_state.left_thumbstick_state and tele_data.tele_state.right_thumbstick_state:
+                        sport_client.Damp()
+                    # control, limit velocity to within 0.3
+                    sport_client.Move(-tele_data.tele_state.left_thumbstick_value[1]  * 0.3,
+                                    -tele_data.tele_state.left_thumbstick_value[0]  * 0.3,
+                                    -tele_data.tele_state.right_thumbstick_value[0] * 0.3)
+                    # print(-tele_data.tele_state.left_thumbstick_value[1])
+                    # print(-tele_data.tele_state.left_thumbstick_value[0])
+                    # print(-tele_data.tele_state.right_thumbstick_value[0])
 
             # get current robot state data.
             current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()

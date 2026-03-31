@@ -137,7 +137,14 @@ if __name__ == '__main__':
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)
         if args.motion:
             if args.input_mode == "controller":
-                loco_wrapper = LocoClientWrapper()
+                if args.sim:
+                    print("### Initializing simulation locomotion publisher...")
+                    sim_loco_publisher = ChannelPublisher("rt/run_command/cmd", String_)
+                    sim_loco_publisher.Init()
+                    print("### publisher initialized")
+                else:
+                    print("Initializing LocoClientWrapper...")
+                    loco_wrapper = LocoClientWrapper()
         else:
             motion_switcher = MotionSwitcher()
             status, result = motion_switcher.Enter_Debug_Mode()
@@ -312,13 +319,27 @@ if __name__ == '__main__':
                 if tele_data.right_ctrl_aButton:
                     START = False
                     STOP = True
-                # command robot to enter damping mode. soft emergency stop function
-                if tele_data.left_ctrl_thumbstick and tele_data.right_ctrl_thumbstick:
-                    loco_wrapper.Damp()
-                # https://github.com/unitreerobotics/xr_teleoperate/issues/135, control, limit velocity to within 0.3
-                loco_wrapper.Move(-tele_data.left_ctrl_thumbstickValue[1] * 0.3,
-                                  -tele_data.left_ctrl_thumbstickValue[0] * 0.3,
-                                  -tele_data.right_ctrl_thumbstickValue[0]* 0.3)
+
+                # simulation mode: publish velocity command to sim; real robot: control robot using loco client
+                if args.sim:
+                    command_list = [
+                        -tele_data.left_ctrl_thumbstickValue[1],
+                        -tele_data.left_ctrl_thumbstickValue[0],
+                        -tele_data.right_ctrl_thumbstickValue[0],
+                        0.8
+                    ]
+                    commands_str = str(command_list)
+                    msg = String_(data=commands_str)
+                    sim_loco_publisher.Write(msg)
+                
+                else:
+                    # command robot to enter damping mode. soft emergency stop function
+                    if tele_data.left_ctrl_thumbstick and tele_data.right_ctrl_thumbstick:
+                        loco_wrapper.Damp()
+                    # https://github.com/unitreerobotics/xr_teleoperate/issues/135, control, limit velocity to within 0.3
+                    loco_wrapper.Move(-tele_data.left_ctrl_thumbstickValue[1] * 0.3,
+                                    -tele_data.left_ctrl_thumbstickValue[0] * 0.3,
+                                    -tele_data.right_ctrl_thumbstickValue[0]* 0.3)
 
             # get current robot state data.
             current_lr_arm_q  = arm_ctrl.get_current_dual_arm_q()
@@ -529,3 +550,8 @@ if __name__ == '__main__':
             logger_mp.error(f"Failed to close recorder: {e}")
         logger_mp.info("✅ Finally, exiting program.")
         exit(0)
+
+
+# run commands
+# locomanipulation task
+# python teleop_hand_and_arm.py --input-mode=controller --arm=G1_29 --ee=dex3 --img-server-ip="192.168.77.43" --motion --sim

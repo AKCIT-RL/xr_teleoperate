@@ -378,7 +378,7 @@ if __name__ == '__main__':
                         right_ee_state = [dual_gripper_state_array[1]]
                         left_hand_action = [dual_gripper_action_array[0]]
                         right_hand_action = [dual_gripper_action_array[1]]
-                        current_body_state = arm_ctrl.get_current_motor_q().tolist()
+                        current_body_state = arm_ctrl.get_current_motor_q().tolist() # all joints position as body state
                         current_body_action = [-tele_data.left_ctrl_thumbstickValue[1]  * 0.3,
                                                -tele_data.left_ctrl_thumbstickValue[0]  * 0.3,
                                                -tele_data.right_ctrl_thumbstickValue[0] * 0.3]

@@ -19,7 +19,7 @@ kTopicInspireDFXState = "rt/inspire/state"
 
 class Inspire_Controller_DFX:
     def __init__(self, left_hand_array, right_hand_array, dual_hand_data_lock = None, dual_hand_state_array = None,
-                       dual_hand_action_array = None, fps = 100.0, Unit_Test = False, simulation_mode = False):
+                       dual_hand_action_array = None, fps = 100.0, Unit_Test = False, simulation_mode = False, replay=False):
         logger_mp.info("Initialize Inspire_Controller_DFX...")
         self.fps = fps
         self.Unit_Test = Unit_Test
@@ -53,10 +53,11 @@ class Inspire_Controller_DFX:
             logger_mp.warning("[Inspire_Controller_DFX] Waiting to subscribe dds...")
         logger_mp.info("[Inspire_Controller_DFX] Subscribe dds ok.")
 
-        hand_control_process = Process(target=self.control_process, args=(left_hand_array, right_hand_array,  self.left_hand_state_array, self.right_hand_state_array,
-                                                                          dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array))
-        hand_control_process.daemon = True
-        hand_control_process.start()
+        if not replay:
+            hand_control_process = Process(target=self.control_process, args=(left_hand_array, right_hand_array,  self.left_hand_state_array, self.right_hand_state_array,
+                                                                            dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array))
+            hand_control_process.daemon = True
+            hand_control_process.start()
 
         logger_mp.info("Initialize Inspire_Controller_DFX OK!")
 

@@ -33,7 +33,7 @@ kTopicDex3RightState = "rt/dex3/right/state"
 
 class Dex3_1_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, dual_hand_data_lock = None, dual_hand_state_array_out = None,
-                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False):
+                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False, replay=False):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -90,10 +90,11 @@ class Dex3_1_Controller:
             logger_mp.warning("[Dex3_1_Controller] Waiting to subscribe dds...")
         logger_mp.info("[Dex3_1_Controller] Subscribe dds ok.")
 
-        hand_control_process = Process(target=self.control_process, args=(left_hand_array_in, right_hand_array_in,  self.left_hand_state_array, self.right_hand_state_array,
-                                                                          dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out))
-        hand_control_process.daemon = True
-        hand_control_process.start()
+        if not replay:
+            hand_control_process = Process(target=self.control_process, args=(left_hand_array_in, right_hand_array_in,  self.left_hand_state_array, self.right_hand_state_array,
+                                                                            dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out))
+            hand_control_process.daemon = True
+            hand_control_process.start()
 
         logger_mp.info("Initialize Dex3_1_Controller OK!")
 
@@ -231,7 +232,7 @@ kTopicGripperRightState = "rt/dex1/right/state"
 
 class Dex1_1_Gripper_Controller:
     def __init__(self, left_gripper_value_in, right_gripper_value_in, dual_gripper_data_lock = None, dual_gripper_state_out = None, dual_gripper_action_out = None, 
-                       filter = True, fps = 200.0, Unit_Test = False, simulation_mode = False):
+                       filter = True, fps = 200.0, Unit_Test = False, simulation_mode = False, replay=False):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -289,10 +290,32 @@ class Dex1_1_Gripper_Controller:
             logger_mp.warning("[Dex1_1_Gripper_Controller] Waiting to subscribe dds...")
         logger_mp.info("[Dex1_1_Gripper_Controller] Subscribe dds ok.")
 
-        self.gripper_control_thread = threading.Thread(target=self.control_thread, args=(left_gripper_value_in, right_gripper_value_in, self.left_gripper_state_value, self.right_gripper_state_value,
-                                                                                         dual_gripper_data_lock, dual_gripper_state_out, dual_gripper_action_out))
-        self.gripper_control_thread.daemon = True
-        self.gripper_control_thread.start()
+        if not replay:
+            self.gripper_control_thread = threading.Thread(target=self.control_thread, args=(left_gripper_value_in, right_gripper_value_in, self.left_gripper_state_value, self.right_gripper_state_value,
+                                                                                            dual_gripper_data_lock, dual_gripper_state_out, dual_gripper_action_out))
+            self.gripper_control_thread.daemon = True
+            self.gripper_control_thread.start()
+        else:
+            dq = 0.0
+            tau = 0.0
+            kp = 5.00
+            kd = 0.05
+            # initialize gripper cmd msg
+            self.left_gripper_msg  = MotorCmds_()
+            self.left_gripper_msg.cmds = [unitree_go_msg_dds__MotorCmd_()]
+            self.right_gripper_msg = MotorCmds_()
+            self.right_gripper_msg.cmds = [unitree_go_msg_dds__MotorCmd_()]
+
+            self.left_gripper_msg.cmds[0].dq  = dq
+            self.left_gripper_msg.cmds[0].tau = tau
+            self.left_gripper_msg.cmds[0].kp  = kp
+            self.left_gripper_msg.cmds[0].kd  = kd
+
+            self.right_gripper_msg.cmds[0].dq  = dq
+            self.right_gripper_msg.cmds[0].tau = tau
+            self.right_gripper_msg.cmds[0].kp  = kp
+            self.right_gripper_msg.cmds[0].kd  = kd
+
 
         logger_mp.info("Initialize Dex1_1_Gripper_Controller OK!")
 

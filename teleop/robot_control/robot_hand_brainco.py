@@ -20,7 +20,7 @@ kTopicbraincoRightState = "rt/brainco/right/state"
 
 class Brainco_Controller:
     def __init__(self, left_hand_array, right_hand_array, dual_hand_data_lock = None, dual_hand_state_array = None,
-                       dual_hand_action_array = None, fps = 100.0, Unit_Test = False, simulation_mode = False):
+                       dual_hand_action_array = None, fps = 100.0, Unit_Test = False, simulation_mode = False, replay=False):
         logger_mp.info("Initialize Brainco_Controller...")
         self.fps = fps
         self.hand_sub_ready = False
@@ -58,10 +58,11 @@ class Brainco_Controller:
             logger_mp.warning("[brainco_Controller] Waiting to subscribe dds...")
         logger_mp.info("[brainco_Controller] Subscribe dds ok.")
 
-        hand_control_process = Process(target=self.control_process, args=(left_hand_array, right_hand_array,  self.left_hand_state_array, self.right_hand_state_array,
-                                                                          dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array))
-        hand_control_process.daemon = True
-        hand_control_process.start()
+        if not replay:
+            hand_control_process = Process(target=self.control_process, args=(left_hand_array, right_hand_array,  self.left_hand_state_array, self.right_hand_state_array,
+                                                                            dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array))
+            hand_control_process.daemon = True
+            hand_control_process.start()
 
         logger_mp.info("Initialize brainco_Controller OK!")
 

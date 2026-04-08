@@ -106,7 +106,57 @@ The currently supported devices in this repository:
   </tr>
 </table>
 
+---
 
+# 📚 Quick Start & Documentation
+
+## 🚀 Choose Your Deployment Path
+
+This repository supports multiple deployment scenarios. Select the guide that matches your use case:
+
+### 1️⃣ **Simulation Deployment** (Recommended for beginners)
+Start with IsaacLab simulator to test teleoperation without physical robots.
+
+- 📖 **Portuguese Guide**: [XR Teleoperate - Simulação](docs/XR_TELEOPERATE_SIMULACAO.md)
+- ⚙️ **Setup**: IsaacLab + XR Teleoperate environment
+- ✅ **Best for**: Learning, testing, development
+
+### 2️⃣ **Physical Robot Deployment**
+Teleoperate actual Unitree robots (G1, H1, H1_2) with real hardware.
+
+- 📖 **Main Guide**: [README.md](README.md) → Section 3
+- 📖 **Portuguese Guide**: [xr_teleoperate_v1.3](docs/XR_TELEOPERATE_V1.3.md)
+- 🛠️ **Hardware Setup**: See [Device.md](Device.md)
+- ⚠️ **Important**: Read safety guidelines before operating
+
+### 3️⃣ **Additional Resources**
+- 🔧 **Hardware Documentation**: [Device.md](Device.md)
+- 📝 **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+- 🌐 **Chinese Documentation**: [README_zh-CN.md](README_zh-CN.md)
+- 🇯🇵 **Japanese Documentation**: [README_ja-JP.md](README_ja-JP.md)
+
+---
+
+## 📋 Initial Setup Checklist
+
+### All Deployments (Simulation + Physical)
+- [ ] Clone repository with submodules
+- [ ] Install dependencies (conda, Python 3.10)
+- [ ] Install unitree_sdk2_python
+- [ ] Configure SSL certificates for XR devices
+- [ ] Install hand retargeting modules (dex/inspire)
+
+### Simulation Only
+- [ ] Install [unitree_sim_isaaclab](https://github.com/unitreerobotics/unitree_sim_isaaclab)
+- [ ] Configure IsaacLab 5.1 environment
+
+### Physical Robot Only
+- [ ] Setup image service on robot's PC2
+- [ ] Install hand control services (Inspire/BrainCo/Dex)
+- [ ] Configure DDS network interface
+- [ ] **Read safety documentation**
+
+---
 
 # 1. 📦 Installation
 

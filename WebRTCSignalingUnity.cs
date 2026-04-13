@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Unity.WebRTC;
 using UnityEngine;
+using UnityEngine.UI;
 using WebSocketSharp;
 
 public static class WebRTCUtils
@@ -50,6 +51,12 @@ public class WebRTCSignalingUnity : MonoBehaviour
     private RTCPeerConnection pc;
     private RTCDataChannel channel;
     private WebSocket ws;
+    private VideoStreamTrack remoteVideoTrack;
+    private Texture remoteVideoTexture;
+
+    [Header("Optional Video Targets")]
+    public RawImage remoteVideoRawImage;
+    public Renderer remoteVideoRenderer;
 
     private bool gotAnswer = false;
     private RTCSessionDescription answerDesc;
@@ -155,6 +162,16 @@ public class WebRTCSignalingUnity : MonoBehaviour
             }));
         };
 
+        pc.OnTrack = e =>
+        {
+            if (e.Track is VideoStreamTrack video)
+            {
+                Debug.Log("🎥 Video track recebida do Python");
+                remoteVideoTrack = video;
+                remoteVideoTrack.OnVideoReceived += OnRemoteVideoReceived;
+            }
+        };
+
         // ----------------------------
         // 📡 DATA CHANNEL
         // ----------------------------
@@ -209,6 +226,17 @@ public class WebRTCSignalingUnity : MonoBehaviour
 
     }
 
+    private void OnRemoteVideoReceived(Texture texture)
+    {
+        remoteVideoTexture = texture;
+
+        if (remoteVideoRawImage != null)
+            remoteVideoRawImage.texture = texture;
+
+        if (remoteVideoRenderer != null)
+            remoteVideoRenderer.material.mainTexture = texture;
+    }
+
     // ==========================================================
     // PARSE DE MENSAGENS
     // ==========================================================
@@ -256,6 +284,9 @@ public class WebRTCSignalingUnity : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (remoteVideoTrack != null)
+            remoteVideoTrack.OnVideoReceived -= OnRemoteVideoReceived;
+
         channel?.Close();
         pc?.Close();
         ws?.Close();

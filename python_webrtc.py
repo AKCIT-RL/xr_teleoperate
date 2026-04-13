@@ -3,13 +3,53 @@ import argparse
 import json
 import logging
 import websockets
+import fractions
 
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
+import numpy as np
+from av import VideoFrame
+
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer, VideoStreamTrack
 
 logging.basicConfig(level=logging.INFO)
 
 pcs = set()
 forwarder = None
+video_track = None
+
+
+class ImageClientVideoTrack(VideoStreamTrack):
+    def __init__(self, img_server_ip: str, fps: float = 30.0):
+        super().__init__()
+        from teleimager.image_client import ImageClient
+
+        self._img_client = ImageClient(host=img_server_ip)
+        self._fps = max(1.0, fps)
+        self._time_base = fractions.Fraction(1, int(self._fps))
+        self._pts = 0
+
+    async def recv(self):
+        # Use thread offload because image client access is blocking.
+        head_img, _ = await asyncio.to_thread(self._img_client.get_head_frame)
+
+        if head_img is None:
+            head_img = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        # If binocular image is side-by-side, send left half first.
+        if len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
+            head_img = head_img[:, : head_img.shape[1] // 2]
+
+        # OpenCV-style frames are usually BGR.
+        frame = VideoFrame.from_ndarray(head_img, format="bgr24")
+        frame.pts = self._pts
+        frame.time_base = self._time_base
+        self._pts += 1
+        return frame
+
+    def close(self):
+        try:
+            self._img_client.close()
+        except Exception:
+            pass
 
 
 class BridgeForwarder:
@@ -99,62 +139,15 @@ def clean_sdp_for_unity(sdp, candidates=None):
     Limpa e reorganiza o SDP para Unity WebRTC.
     - candidates: lista de strings de candidates já filtradas
     """
-    lines = sdp.splitlines()
-    session = []
-    media = []
-
-    # separa session vs media
-    in_media = False
-    for line in lines:
+    cleaned = []
+    for line in sdp.splitlines():
         if not line.strip():
             continue
-        if line.startswith("m="):
-            in_media = True
-
-        # remove problemáticos
+        # Keep full SDP shape (video + data), only remove known problematic attrs.
         if line.startswith("a=extmap-allow-mixed") or line.startswith("a=ice-options"):
             continue
-
-        if in_media:
-            media.append(line)
-        else:
-            session.append(line)
-
-    # msid-semantic uma vez, logo após a=group:BUNDLE
-    insert_idx = next((i for i, l in enumerate(session) if l.startswith("a=group:BUNDLE")), -1)
-    if insert_idx != -1:
-        session.insert(insert_idx + 1, "a=msid-semantic: WMS")
-    else:
-        session.append("a=msid-semantic: WMS")
-
-    # extrai campos importantes do media
-    m_application = next((l for l in media if l.startswith("m=application")), None)
-    c_line = next((l for l in media if l.startswith("c=IN")), None)
-    mid = next((l for l in media if l.startswith("a=mid")), None)
-    sctp = next((l for l in media if l.startswith("a=sctp-port")), None)
-    fingerprint = next((l for l in media if l.startswith("a=fingerprint:sha-256")), None)
-    ice_ufrag = next((l for l in media if l.startswith("a=ice-ufrag")), None)
-    ice_pwd = next((l for l in media if l.startswith("a=ice-pwd")), None)
-
-    # monta media na ordem que Unity aceita
-    new_media = [
-        m_application,
-        c_line,
-        mid,
-        sctp,
-    ]
-
-    # adiciona candidates se fornecidos
-    if candidates:
-        new_media.extend(candidates)
-        new_media.append("a=end-of-candidates")
-
-    # adiciona ufrag/pwd/fingerprint/setup
-    new_media.extend([ice_ufrag, ice_pwd, fingerprint, "a=setup:active"])
-
-    new_media = [l for l in new_media if l]
-
-    return "\r\n".join(session + new_media)
+        cleaned.append(line)
+    return "\r\n".join(cleaned)
 # ------------------------------
 # Handler WebSocket
 # ------------------------------
@@ -234,83 +227,17 @@ async def handle_client(websocket):
                 pending_candidates.clear()
                 print("🧊 Pending ICE aplicados")
 
+                if video_track is not None:
+                    pc.addTrack(video_track)
+                    print("🎥 Video track adicionada ao PeerConnection")
+
                 answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
-
-                # ------------------------------
-                # Filtra IPv6 e link-local do SDP
-                # ------------------------------
-                sdp_lines = pc.localDescription.sdp.splitlines()
-                new_sdp_lines = []
-                connection_line_added = False
-
-                for line in sdp_lines:
-
-                    # Remove IPv6 ou link-local
-                    if line.startswith("c=IN IP6") or "169.254." in line:
-                        print("🚫 Removendo linha de conexão inválida:", line)
-                        continue
-
-                    # Filtra candidates inválidos
-                    if line.startswith("a=candidate:"):
-                        parts = line.split()
-                        ip = parts[4]
-                        if ":" in ip or ip.startswith("169.254."):
-                            print("🚫 Removendo candidate inválido do SDP:", ip)
-                            continue
-
-                    new_sdp_lines.append(line)
-
-                # ► Verifica se ainda existe "c=IN"
-                has_connection_line = any(l.startswith("c=IN") for l in new_sdp_lines)
-
-                if not has_connection_line:
-                    import socket
-                    ip = socket.gethostbyname(socket.gethostname())
-                    good_c_line = f"c=IN IP4 {ip}"
-                    print("➕ Adicionando linha de conexão válida:", good_c_line)
-
-                    # Inserir logo após "m=application"
-                    for i, l in enumerate(new_sdp_lines):
-                        if l.startswith("m=application"):
-                            new_sdp_lines.insert(i + 1, good_c_line)
-                            break
-
-                # Monta o SDP final
-                new_sdp = "\r\n".join(new_sdp_lines)
 
                 while pc.iceGatheringState != "complete":
                     await asyncio.sleep(0.1)
 
-                
-                new_sdp = clean_sdp_for_unity(new_sdp)
-                answer_fixa = [
-                    "v=0",
-                    "o=- 0 0 IN IP4 0.0.0.0",
-                    "s=-",
-                    "t=0 0",
-                    "a=group:BUNDLE 0",
-                    "a=msid-semantic:WMS",
-                    "m=application 54380 UDP/DTLS/SCTP webrtc-datachannel",
-                    "c=IN IP4 0.0.0.0",
-                    "a=mid:0",
-                    "a=max-message-size:65536",
-                    "a=candidate:a138df236977f30fc6bd7add39969f04 1 udp 2130706431 fd7a:115c:a1e0::b101:8c83 54380 typ host",
-                    "a=candidate:ad14d2108c406b61752b2ccd658c2ab1 1 udp 2130706431 100.104.140.98 54381 typ host",
-                    "a=candidate:13aab828fd3e44e4e88e5b6941da9711 1 udp 2130706431 2804:3d90:8286:49e0:fce0:9a0:d81b:8949 54382 typ host",
-                    "a=candidate:bee9f57f2289be8d0ba405c9987b9c3b 1 udp 2130706431 2804:3d90:8286:49e0:90e5:39fa:6edc:b6ca 54383 typ host",
-                    "a=candidate:40537ee97c0b7cd4fcd42ec8e27c5e50 1 udp 2130706431 192.168.1.20 54384 typ host",
-                    "a=candidate:8da486d9d6c197b4e10ed3fdf23632ac 1 udp 1694498815 177.200.36.116 5886 typ srflx raddr 192.168.1.20 rport 54384",
-                    "a=end-of-candidates",
-                    "a=ice-ufrag:f6fD",
-                    "a=ice-pwd:4MxocW7cRhHsR081u278z9",
-                    "a=setup:active",
-                    "a=fingerprint:sha-256 AC:78:1A:DC:C3:66:43:11:77:87:6B:C1:AD:2D:81:66:9C:AC:DE:84:28:CA:B7:58:BE:5B:FB:08:D8:0E:1D:79",
-                    "a=sctp-port:5000"
-                ]
-
-                # Para enviar como string única com \r\n:
-                answer_sdp = "\r\n".join(answer_fixa)
+                new_sdp = clean_sdp_for_unity(pc.localDescription.sdp)
                 
                 await websocket.send(json.dumps({
                     "type": pc.localDescription.type,
@@ -355,22 +282,30 @@ async def handle_client(websocket):
 # Servidor
 # ------------------------------
 async def main():
-    global forwarder
+    global forwarder, video_track
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Signaling server host")
     parser.add_argument("--port", type=int, default=8765, help="Signaling server port")
     parser.add_argument("--forward-url", type=str, default=None, help="Optional websocket URL to forward Unity pose payloads")
+    parser.add_argument("--send-video", action="store_true", help="Send head camera video track to Unity over WebRTC")
+    parser.add_argument("--img-server-ip", type=str, default="127.0.0.1", help="Image server IP for video source")
+    parser.add_argument("--video-fps", type=float, default=30.0, help="Video FPS sent to Unity")
     args = parser.parse_args()
 
     if args.forward_url:
         forwarder = BridgeForwarder(args.forward_url)
         forwarder.start()
 
+    if args.send_video:
+        video_track = ImageClientVideoTrack(args.img_server_ip, fps=args.video_fps)
+
     server = await websockets.serve(handle_client, args.host, args.port)
     print(f"🚀 Servidor rodando em ws://{args.host}:{args.port}")
     if args.forward_url:
         print(f"🔁 Forward de poses para {args.forward_url}")
+    if args.send_video:
+        print(f"🎥 Video enabled from image server {args.img_server_ip}")
 
     try:
         await asyncio.Future()
@@ -379,6 +314,8 @@ async def main():
         await server.wait_closed()
         if forwarder is not None:
             await forwarder.close()
+        if video_track is not None:
+            video_track.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

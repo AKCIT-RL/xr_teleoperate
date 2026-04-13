@@ -13,13 +13,13 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize # dds 
-from televuer import TeleVuerWrapper
 from teleop.robot_control.robot_arm import G1_29_ArmController, G1_23_ArmController, H1_2_ArmController, H1_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK, G1_23_ArmIK, H1_2_ArmIK, H1_ArmIK
 from teleimager.image_client import ImageClient
 from teleop.utils.episode_writer import EpisodeWriter
 from teleop.utils.ipc import IPC_Server
 from teleop.utils.motion_switcher import MotionSwitcher, LocoClientWrapper
+from teleop.utils.unity_televuer_bridge import UnityTeleVuerBridge
 from sshkeyboard import listen_keyboard, stop_listening
 
 # for simulation
@@ -80,6 +80,9 @@ if __name__ == '__main__':
     parser.add_argument('--ee', type=str, choices=['dex1', 'dex3', 'inspire_ftp', 'inspire_dfx', 'brainco'], help='Select end effector controller')
     parser.add_argument('--img-server-ip', type=str, default='192.168.123.164', help='IP address of image server, used by teleimager and televuer')
     parser.add_argument('--network-interface', type=str, default=None, help='Network interface for dds communication, e.g., eth0, wlan0. If None, use default interface.')
+    parser.add_argument('--tracking-source', type=str, choices=['televuer', 'unity'], default='televuer', help='Tracking backend source for teleop data')
+    parser.add_argument('--unity-host', type=str, default='0.0.0.0', help='Host for Unity websocket bridge server')
+    parser.add_argument('--unity-port', type=int, default=8765, help='Port for Unity websocket bridge server')
     # mode flags
     parser.add_argument('--motion', action = 'store_true', help = 'Enable motion control mode')
     parser.add_argument('--headless', action='store_true', help='Enable headless mode (no display)')
@@ -121,18 +124,30 @@ if __name__ == '__main__':
         logger_mp.debug(f"Camera config: {camera_config}")
         xr_need_local_img = not (args.display_mode == 'pass-through' or camera_config['head_camera']['enable_webrtc'])
 
-        # televuer_wrapper: obtain hand pose data from the XR device and transmit the robot's head camera image to the XR device.
-        tv_wrapper = TeleVuerWrapper(use_hand_tracking=args.input_mode == "hand", 
-                                     binocular=camera_config['head_camera']['binocular'],
-                                     img_shape=camera_config['head_camera']['image_shape'],
-                                     # maybe should decrease fps for better performance?
-                                     # https://github.com/unitreerobotics/xr_teleoperate/issues/172
-                                     # display_fps=camera_config['head_camera']['fps'] ? args.frequency? 30.0?
-                                     display_mode=args.display_mode,
-                                     zmq=camera_config['head_camera']['enable_zmq'],
-                                     webrtc=camera_config['head_camera']['enable_webrtc'],
-                                     webrtc_url=f"https://{args.img_server_ip}:{camera_config['head_camera']['webrtc_port']}/offer",
-                                     )
+        if args.tracking_source == "televuer":
+            from televuer import TeleVuerWrapper
+
+            # televuer_wrapper: obtain hand pose data from XR device and push head image to XR side.
+            tv_wrapper = TeleVuerWrapper(use_hand_tracking=args.input_mode == "hand", 
+                                         binocular=camera_config['head_camera']['binocular'],
+                                         img_shape=camera_config['head_camera']['image_shape'],
+                                         # maybe should decrease fps for better performance?
+                                         # https://github.com/unitreerobotics/xr_teleoperate/issues/172
+                                         # display_fps=camera_config['head_camera']['fps'] ? args.frequency? 30.0?
+                                         display_mode=args.display_mode,
+                                         zmq=camera_config['head_camera']['enable_zmq'],
+                                         webrtc=camera_config['head_camera']['enable_webrtc'],
+                                         webrtc_url=f"https://{args.img_server_ip}:{camera_config['head_camera']['webrtc_port']}/offer",
+                                         )
+        else:
+            if args.input_mode == "controller":
+                raise ValueError("Unity tracking-source currently supports wrist tracking only. Use --input-mode hand.")
+
+            if args.ee in {"dex3", "inspire_dfx", "inspire_ftp", "brainco"}:
+                raise ValueError("Unity tracking-source does not provide 25-keypoint hand skeleton yet; choose --ee dex1 or disable hand controller.")
+
+            logger_mp.info(f"Starting Unity tracking bridge on ws://{args.unity_host}:{args.unity_port}")
+            tv_wrapper = UnityTeleVuerBridge(host=args.unity_host, port=args.unity_port)
         
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)
         if args.motion:

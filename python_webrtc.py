@@ -41,10 +41,11 @@ class BridgeForwarder:
                 async with websockets.connect(self.url) as ws:
                     logging.info(f"Forwarder connected to {self.url}")
                     while not self._stop.is_set():
-                        payload = await asyncio.wait_for(self.queue.get(), timeout=0.5)
+                        try:
+                            payload = await asyncio.wait_for(self.queue.get(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            continue
                         await ws.send(payload)
-            except asyncio.TimeoutError:
-                continue
             except Exception as e:
                 logging.warning(f"Forwarder disconnected: {e}")
                 await asyncio.sleep(1.0)

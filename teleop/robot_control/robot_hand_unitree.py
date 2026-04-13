@@ -232,7 +232,7 @@ kTopicGripperRightState = "rt/dex1/right/state"
 
 class Dex1_1_Gripper_Controller:
     def __init__(self, left_gripper_value_in, right_gripper_value_in, dual_gripper_data_lock = None, dual_gripper_state_out = None, dual_gripper_action_out = None, 
-                       filter = True, fps = 200.0, Unit_Test = False, simulation_mode = False, replay=False):
+                       filter = True, fps = 200.0, Unit_Test = False, simulation_mode = False, replay=False, tracking_source = "televuer"):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -285,10 +285,13 @@ class Dex1_1_Gripper_Controller:
         self.subscribe_state_thread.daemon = True
         self.subscribe_state_thread.start()
 
-        while not self.gripper_sub_ready:
-            time.sleep(0.01)
-            logger_mp.warning("[Dex1_1_Gripper_Controller] Waiting to subscribe dds...")
-        logger_mp.info("[Dex1_1_Gripper_Controller] Subscribe dds ok.")
+        if tracking_source == "televuer":
+            while not self.gripper_sub_ready:
+                time.sleep(0.01)
+                logger_mp.warning("[Dex1_1_Gripper_Controller] Waiting to subscribe dds...")
+            logger_mp.info("[Dex1_1_Gripper_Controller] Subscribe dds ok.")
+        else:
+            logger_mp.info("[Dex1_1_Gripper_Controller] Using Unity tracking source, DDS subscriber running in background...")
 
         if not replay:
             self.gripper_control_thread = threading.Thread(target=self.control_thread, args=(left_gripper_value_in, right_gripper_value_in, self.left_gripper_state_value, self.right_gripper_state_value,

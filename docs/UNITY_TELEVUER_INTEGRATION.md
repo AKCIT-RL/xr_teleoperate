@@ -50,7 +50,7 @@ python teleop/teleop_hand_and_arm.py \
   --input-mode hand \
   --arm G1_29 \
   --ee dex1 \
-  --img-server-ip 192.168.123.164
+  --img-server-ip 172.20.10.2
 ```
 
 ## Next extension points

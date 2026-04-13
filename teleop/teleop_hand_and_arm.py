@@ -101,11 +101,13 @@ if __name__ == '__main__':
     logger_mp.info(f"args: {args}")
 
     try:
+        print("[startup] begin", flush=True)
         # setup dds communication domains id
         if args.sim:
             ChannelFactoryInitialize(1, networkInterface=args.network_interface)
         else:
             ChannelFactoryInitialize(0, networkInterface=args.network_interface)
+        print("[startup] dds channel initialized", flush=True)
 
         # ipc communication mode. client usage: see utils/ipc.py
         if args.ipc:
@@ -123,6 +125,7 @@ if __name__ == '__main__':
         camera_config = img_client.get_cam_config()
         logger_mp.debug(f"Camera config: {camera_config}")
         xr_need_local_img = not (args.display_mode == 'pass-through' or camera_config['head_camera']['enable_webrtc'])
+        print("[startup] image client ready", flush=True)
 
         if args.tracking_source == "televuer":
             from televuer import TeleVuerWrapper
@@ -148,6 +151,7 @@ if __name__ == '__main__':
 
             logger_mp.info(f"Starting Unity tracking bridge on ws://{args.unity_host}:{args.unity_port}")
             tv_wrapper = UnityTeleVuerBridge(host=args.unity_host, port=args.unity_port)
+        print("[startup] tracking wrapper ready", flush=True)
         
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)
         if args.motion:
@@ -168,16 +172,17 @@ if __name__ == '__main__':
         # arm
         if args.arm == "G1_29":
             arm_ik = G1_29_ArmIK()
-            arm_ctrl = G1_29_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            arm_ctrl = G1_29_ArmController(motion_mode=args.motion, simulation_mode=args.sim, tracking_source=args.tracking_source)
         elif args.arm == "G1_23":
             arm_ik = G1_23_ArmIK()
-            arm_ctrl = G1_23_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            arm_ctrl = G1_23_ArmController(motion_mode=args.motion, simulation_mode=args.sim, tracking_source=args.tracking_source)
         elif args.arm == "H1_2":
             arm_ik = H1_2_ArmIK()
-            arm_ctrl = H1_2_ArmController(motion_mode=args.motion, simulation_mode=args.sim)
+            arm_ctrl = H1_2_ArmController(motion_mode=args.motion, simulation_mode=args.sim, tracking_source=args.tracking_source)
         elif args.arm == "H1":
             arm_ik = H1_ArmIK()
-            arm_ctrl = H1_ArmController(simulation_mode=args.sim)
+            arm_ctrl = H1_ArmController(simulation_mode=args.sim, tracking_source=args.tracking_source)
+        print("[startup] arm ik/controller ready", flush=True)
 
         # end-effector
         if args.ee == "dex3":
@@ -189,6 +194,7 @@ if __name__ == '__main__':
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
             hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, 
                                           dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            print("[startup] dex3 controller ready", flush=True)
         elif args.ee == "dex1":
             from teleop.robot_control.robot_hand_unitree import Dex1_1_Gripper_Controller
             left_gripper_value = Value('d', 0.0, lock=True)        # [input]
@@ -197,7 +203,9 @@ if __name__ == '__main__':
             dual_gripper_state_array = Array('d', 2, lock=False)   # current left, right gripper state(2) data.
             dual_gripper_action_array = Array('d', 2, lock=False)  # current left, right gripper action(2) data.
             gripper_ctrl = Dex1_1_Gripper_Controller(left_gripper_value, right_gripper_value, dual_gripper_data_lock, 
-                                                     dual_gripper_state_array, dual_gripper_action_array, simulation_mode=args.sim)
+                                                     dual_gripper_state_array, dual_gripper_action_array, simulation_mode=args.sim,
+                                                     tracking_source=args.tracking_source)
+            print("[startup] dex1 controller ready", flush=True)
         elif args.ee == "inspire_dfx":
             from teleop.robot_control.robot_hand_inspire import Inspire_Controller_DFX
             left_hand_pos_array = Array('d', 75, lock = True)      # [input]
@@ -206,6 +214,7 @@ if __name__ == '__main__':
             dual_hand_state_array = Array('d', 12, lock = False)   # [output] current left, right hand state(12) data.
             dual_hand_action_array = Array('d', 12, lock = False)  # [output] current left, right hand action(12) data.
             hand_ctrl = Inspire_Controller_DFX(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            print("[startup] inspire_dfx controller ready", flush=True)
         elif args.ee == "inspire_ftp":
             from teleop.robot_control.robot_hand_inspire import Inspire_Controller_FTP
             left_hand_pos_array = Array('d', 75, lock = True)      # [input]
@@ -214,6 +223,7 @@ if __name__ == '__main__':
             dual_hand_state_array = Array('d', 12, lock = False)   # [output] current left, right hand state(12) data.
             dual_hand_action_array = Array('d', 12, lock = False)  # [output] current left, right hand action(12) data.
             hand_ctrl = Inspire_Controller_FTP(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            print("[startup] inspire_ftp controller ready", flush=True)
         elif args.ee == "brainco":
             from teleop.robot_control.robot_hand_brainco import Brainco_Controller
             left_hand_pos_array = Array('d', 75, lock = True)      # [input]
@@ -223,6 +233,7 @@ if __name__ == '__main__':
             dual_hand_action_array = Array('d', 12, lock = False)  # [output] current left, right hand action(12) data.
             hand_ctrl = Brainco_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, 
                                            dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            print("[startup] brainco controller ready", flush=True)
         else:
             pass
         
@@ -251,6 +262,7 @@ if __name__ == '__main__':
             reset_pose_publisher.Init()
             from teleop.utils.sim_state_topic import start_sim_state_subscribe
             sim_state_subscriber = start_sim_state_subscribe()
+            print("[startup] sim subscribers ready", flush=True)
 
         # record + headless / non-headless mode
         if args.record:
@@ -260,6 +272,7 @@ if __name__ == '__main__':
                                      task_steps = args.task_steps,
                                      frequency = args.frequency, 
                                      rerun_log = not args.headless)
+            print("[startup] recorder ready", flush=True)
 
         logger_mp.info("----------------------------------------------------------------")
         logger_mp.info("🟢  Press [r] to start syncing the robot with your movements.")
@@ -269,6 +282,14 @@ if __name__ == '__main__':
             logger_mp.info("🔵  Recording is DISABLED (run with --record to enable).")
         logger_mp.info("🔴  Press [q] to stop and exit the program.")
         logger_mp.info("⚠️  IMPORTANT: Please keep your distance and stay safe.")
+        # Fallback to stdout in case multiprocessing logger output is delayed or filtered.
+        print("----------------------------------------------------------------", flush=True)
+        print("Press [r] to start syncing the robot with your movements.", flush=True)
+        if args.record:
+            print("Press [s] to START or SAVE recording (toggle cycle).", flush=True)
+        else:
+            print("Recording is DISABLED (run with --record to enable).", flush=True)
+        print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)

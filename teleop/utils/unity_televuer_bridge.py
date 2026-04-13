@@ -86,9 +86,12 @@ class UnityTeleVuerBridge:
     """
     Compatibility bridge that exposes a TeleVuer-like interface and ingests
     head/left/right 4x4 matrices sent by Unity over a websocket DataChannel bridge.
+    
+    Receives poses from python_webrtc.py on a separate port (default 8766).
+    python_webrtc.py listens on 8765 for WebRTC, forwards poses to this bridge on 8766.
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8766):
         self._host = host
         self._port = port
         self._lock = threading.Lock()

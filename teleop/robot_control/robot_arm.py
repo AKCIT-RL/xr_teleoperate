@@ -59,7 +59,7 @@ class DataBuffer:
             self.data = data
 
 class G1_29_ArmController:
-    def __init__(self, motion_mode = False, simulation_mode = False):
+    def __init__(self, motion_mode = False, simulation_mode = False, tracking_source = "televuer"):
         logger_mp.info("Initialize G1_29_ArmController...")
         self.q_target = np.zeros(14)
         self.tauff_target = np.zeros(14)
@@ -79,6 +79,7 @@ class G1_29_ArmController:
         self._speed_gradual_max = False
         self._gradual_start_time = None
         self._gradual_time = None
+        self.tracking_source = tracking_source
 
         if self.motion_mode:
             if self.simulation_mode:
@@ -97,16 +98,24 @@ class G1_29_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        while not self.lowstate_buffer.GetData():
-            time.sleep(0.1)
-            logger_mp.warning("[G1_29_ArmController] Waiting to subscribe dds...")
-        logger_mp.info("[G1_29_ArmController] Subscribe dds ok.")
+        # Only wait for DDS if using televuer tracking source
+        if tracking_source == "televuer":
+            while not self.lowstate_buffer.GetData():
+                time.sleep(0.1)
+                logger_mp.warning("[G1_29_ArmController] Waiting to subscribe dds...")
+            logger_mp.info("[G1_29_ArmController] Subscribe dds ok.")
+        else:
+            logger_mp.info("[G1_29_ArmController] Using Unity tracking source, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        self.msg.mode_machine = self.get_mode_machine()
+        if self.tracking_source == "televuer":
+            self.msg.mode_machine = self.get_mode_machine()
+        else:
+            # In Unity mode DDS state may not be available immediately.
+            self.msg.mode_machine = 0
 
         self.all_motor_q = self.get_current_motor_q()
         logger_mp.debug(f"Current all body motor state q:\n{self.all_motor_q} \n")
@@ -202,19 +211,31 @@ class G1_29_ArmController:
 
     def get_mode_machine(self):
         '''Return current dds mode machine.'''
-        return self.lowstate_subscriber.Read().mode_machine
+        msg = self.lowstate_subscriber.Read()
+        if msg is None:
+            return 0
+        return msg.mode_machine
     
     def get_current_motor_q(self):
         '''Return current state q of all body motors.'''
-        return np.array([self.lowstate_buffer.GetData().motor_state[id].q for id in G1_29_JointIndex])
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            return np.zeros(len(G1_29_JointIndex))
+        return np.array([lowstate.motor_state[id].q for id in G1_29_JointIndex])
     
     def get_current_dual_arm_q(self):
         '''Return current state q of the left and right arm motors.'''
-        return np.array([self.lowstate_buffer.GetData().motor_state[id].q for id in G1_29_JointArmIndex])
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            return np.zeros(len(G1_29_JointArmIndex))
+        return np.array([lowstate.motor_state[id].q for id in G1_29_JointArmIndex])
     
     def get_current_dual_arm_dq(self):
         '''Return current state dq of the left and right arm motors.'''
-        return np.array([self.lowstate_buffer.GetData().motor_state[id].dq for id in G1_29_JointArmIndex])
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            return np.zeros(len(G1_29_JointArmIndex))
+        return np.array([lowstate.motor_state[id].dq for id in G1_29_JointArmIndex])
     
     def ctrl_dual_arm_go_home(self):
         '''Move both the left and right arms of the robot to their home position by setting the target joint angles (q) and torques (tau) to zero.'''
@@ -342,7 +363,7 @@ class G1_29_JointIndex(IntEnum):
     kNotUsedJoint5 = 34
 
 class G1_23_ArmController:
-    def __init__(self, motion_mode = False, simulation_mode = False):
+    def __init__(self, motion_mode = False, simulation_mode = False, tracking_source = "televuer"):
         self.simulation_mode = simulation_mode
         self.motion_mode = motion_mode
 
@@ -380,10 +401,14 @@ class G1_23_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        while not self.lowstate_buffer.GetData():
-            time.sleep(0.1)
-            logger_mp.warning("[G1_23_ArmController] Waiting to subscribe dds...")
-        logger_mp.info("[G1_23_ArmController] Subscribe dds ok.")
+        # Only wait for DDS if using televuer tracking source
+        if tracking_source == "televuer":
+            while not self.lowstate_buffer.GetData():
+                time.sleep(0.1)
+                logger_mp.warning("[G1_23_ArmController] Waiting to subscribe dds...")
+            logger_mp.info("[G1_23_ArmController] Subscribe dds ok.")
+        else:
+            logger_mp.info("[G1_23_ArmController] Using Unity tracking source, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
@@ -617,7 +642,7 @@ class G1_23_JointIndex(IntEnum):
     kNotUsedJoint5 = 34
 
 class H1_2_ArmController:
-    def __init__(self, motion_mode = False, simulation_mode = False):
+    def __init__(self, motion_mode = False, simulation_mode = False, tracking_source = "televuer"):
         self.simulation_mode = simulation_mode
         self.motion_mode = motion_mode
         
@@ -655,10 +680,14 @@ class H1_2_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        while not self.lowstate_buffer.GetData():
-            time.sleep(0.1)
-            logger_mp.warning("[H1_2_ArmController] Waiting to subscribe dds...")
-        logger_mp.info("[H1_2_ArmController] Subscribe dds ok.")
+        # Only wait for DDS if using televuer tracking source
+        if tracking_source == "televuer":
+            while not self.lowstate_buffer.GetData():
+                time.sleep(0.1)
+                logger_mp.warning("[H1_2_ArmController] Waiting to subscribe dds...")
+            logger_mp.info("[H1_2_ArmController] Subscribe dds ok.")
+        else:
+            logger_mp.info("[H1_2_ArmController] Using Unity tracking source, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
@@ -899,7 +928,7 @@ class H1_2_JointIndex(IntEnum):
     kNotUsedJoint7 = 34
 
 class H1_ArmController:
-    def __init__(self, simulation_mode = False):
+    def __init__(self, simulation_mode = False, tracking_source = "televuer"):
         self.simulation_mode = simulation_mode
         
         logger_mp.info("Initialize H1_ArmController...")
@@ -930,10 +959,14 @@ class H1_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        while not self.lowstate_buffer.GetData():
-            time.sleep(0.1)
-            logger_mp.warning("[H1_ArmController] Waiting to subscribe dds...")
-        logger_mp.info("[H1_ArmController] Subscribe dds ok.")
+        # Only wait for DDS if using televuer tracking source
+        if tracking_source == "televuer":
+            while not self.lowstate_buffer.GetData():
+                time.sleep(0.1)
+                logger_mp.warning("[H1_ArmController] Waiting to subscribe dds...")
+            logger_mp.info("[H1_ArmController] Subscribe dds ok.")
+        else:
+            logger_mp.info("[H1_ArmController] Using Unity tracking source, DDS subscriber running in background...")
 
         # initialize h1's lowcmd msg
         self.crc = CRC()

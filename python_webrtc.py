@@ -4,6 +4,7 @@ import json
 import logging
 import websockets
 import fractions
+import av
 
 import numpy as np
 from av import VideoFrame
@@ -50,6 +51,31 @@ class ImageClientVideoTrack(VideoStreamTrack):
             self._img_client.close()
         except Exception:
             pass
+
+
+class StaticImageVideoTrack(VideoStreamTrack):
+    def __init__(self, image_path: str, fps: float = 30.0):
+        super().__init__()
+        self._fps = max(1.0, fps)
+        self._time_base = fractions.Fraction(1, int(self._fps))
+        self._pts = 0
+
+        # Decode one frame from a local image file using PyAV/FFmpeg.
+        container = av.open(image_path)
+        frame = next(container.decode(video=0))
+        self._image = frame.to_ndarray(format="bgr24")
+        container.close()
+
+    async def recv(self):
+        frame = VideoFrame.from_ndarray(self._image, format="bgr24")
+        frame.pts = self._pts
+        frame.time_base = self._time_base
+        self._pts += 1
+        await asyncio.sleep(1.0 / self._fps)
+        return frame
+
+    def close(self):
+        pass
 
 
 class BridgeForwarder:
@@ -228,8 +254,11 @@ async def handle_client(websocket):
                 print("🧊 Pending ICE aplicados")
 
                 if video_track is not None:
-                    pc.addTrack(video_track)
-                    print("🎥 Video track adicionada ao PeerConnection")
+                    if "m=video" in data["sdp"]:
+                        pc.addTrack(video_track)
+                        print("🎥 Video track adicionada ao PeerConnection")
+                    else:
+                        print("⚠️ Offer sem m=video; Unity precisa solicitar vídeo (AddTransceiver RecvOnly).")
 
                 answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
@@ -289,6 +318,7 @@ async def main():
     parser.add_argument("--port", type=int, default=8765, help="Signaling server port")
     parser.add_argument("--forward-url", type=str, default=None, help="Optional websocket URL to forward Unity pose payloads")
     parser.add_argument("--send-video", action="store_true", help="Send head camera video track to Unity over WebRTC")
+    parser.add_argument("--test-image", type=str, default=None, help="Optional local image path (jpg/png) to stream as repeated video frames")
     parser.add_argument("--img-server-ip", type=str, default="127.0.0.1", help="Image server IP for video source")
     parser.add_argument("--video-fps", type=float, default=30.0, help="Video FPS sent to Unity")
     args = parser.parse_args()
@@ -297,7 +327,9 @@ async def main():
         forwarder = BridgeForwarder(args.forward_url)
         forwarder.start()
 
-    if args.send_video:
+    if args.test_image:
+        video_track = StaticImageVideoTrack(args.test_image, fps=args.video_fps)
+    elif args.send_video:
         video_track = ImageClientVideoTrack(args.img_server_ip, fps=args.video_fps)
 
     server = await websockets.serve(handle_client, args.host, args.port)
@@ -306,6 +338,8 @@ async def main():
         print(f"🔁 Forward de poses para {args.forward_url}")
     if args.send_video:
         print(f"🎥 Video enabled from image server {args.img_server_ip}")
+    elif args.test_image:
+        print(f"🖼️  Test image video enabled from {args.test_image}")
 
     try:
         await asyncio.Future()

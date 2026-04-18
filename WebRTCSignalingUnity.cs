@@ -5,13 +5,11 @@ using System.Linq;
 using System.Text;
 using Unity.WebRTC;
 using UnityEngine;
-using UnityEngine.UI;
 using WebSocketSharp;
 
 public static class WebRTCUtils
 {
     /// <summary>
-    /// Aplica um SDP fixo (offer ou answer) no RTCPeerConnection.
     /// Recebe o SDP linha a linha e adiciona os candidates corretamente.
     /// </summary>
     /// <param name="peerConnection">O RTCPeerConnection da Unity</param>
@@ -53,18 +51,63 @@ public class WebRTCSignalingUnity : MonoBehaviour
     private WebSocket ws;
     private VideoStreamTrack remoteVideoTrack;
     private Texture remoteVideoTexture;
+    private volatile bool hasPendingVideoFrame;
+    private int appliedVideoFrames = 0;
+    private float lastVideoLogTime = 0f;
 
-    [Header("Optional Video Targets")]
-    public RawImage remoteVideoRawImage;
+    [Header("Video Target")]
     public Renderer remoteVideoRenderer;
+
+    [Header("Tracking")]
+    public TrackerSender trackerSender;
 
     private bool gotAnswer = false;
     private RTCSessionDescription answerDesc;
+    private Coroutine webRtcUpdateCoroutine;
 
     void Start()
     {
         WebRTC.Initialize();
+        webRtcUpdateCoroutine = StartCoroutine(WebRTC.Update());
         StartCoroutine(WebRTCSetup());
+    }
+
+    void Update()
+    {
+        if (!hasPendingVideoFrame || remoteVideoTexture == null)
+            return;
+
+        ApplyRemoteTexture(remoteVideoTexture);
+        appliedVideoFrames++;
+
+        if (Time.unscaledTime - lastVideoLogTime > 1.0f)
+        {
+            Debug.Log($"🎞️ Remote video frames applied: {appliedVideoFrames}, texture: {remoteVideoTexture.width}x{remoteVideoTexture.height}");
+            lastVideoLogTime = Time.unscaledTime;
+        }
+
+        hasPendingVideoFrame = false;
+    }
+
+    private void ApplyRemoteTexture(Texture texture)
+    {
+        // 3D renderer path (supports Built-in and URP shader property names)
+        if (remoteVideoRenderer != null && remoteVideoRenderer.material != null)
+        {
+            var mat = remoteVideoRenderer.material;
+
+            if (mat.HasProperty("_BaseMap"))
+                mat.SetTexture("_BaseMap", texture);
+
+            if (mat.HasProperty("_MainTex"))
+                mat.SetTexture("_MainTex", texture);
+
+            if (mat.HasProperty("_BaseColor"))
+                mat.SetColor("_BaseColor", Color.white);
+
+            if (mat.HasProperty("_Color"))
+                mat.SetColor("_Color", Color.white);
+        }
     }
 
     private IEnumerator SendTestMessages()
@@ -177,9 +220,27 @@ public class WebRTCSignalingUnity : MonoBehaviour
         // ----------------------------
         channel = pc.CreateDataChannel("tracker");
 
+        // Request remote video explicitly so the offer contains an m=video section.
+        var videoTransceiverInit = new RTCRtpTransceiverInit
+        {
+            direction = RTCRtpTransceiverDirection.RecvOnly
+        };
+        pc.AddTransceiver(TrackKind.Video, videoTransceiverInit);
+
         channel.OnOpen = () =>
         {
             Debug.Log("🔥 UNITY: DataChannel OPEN");
+
+            if (trackerSender != null)
+            {
+                trackerSender.SetChannel(channel);
+                Debug.Log("✅ TrackerSender channel assigned on DataChannel open");
+            }
+            else
+            {
+                Debug.LogWarning("⚠️ TrackerSender is null on DataChannel open");
+            }
+
             StartCoroutine(SendTestMessages());
         };
 
@@ -188,9 +249,18 @@ public class WebRTCSignalingUnity : MonoBehaviour
             Debug.Log("📥 Python → Unity: " + Encoding.UTF8.GetString(msg));
         };
 
-        var tracker = FindAnyObjectByType<TrackerSender>();
-        if (tracker != null)
-            tracker.SetChannel(channel);
+        if (trackerSender == null)
+            trackerSender = FindAnyObjectByType<TrackerSender>();
+
+        if (trackerSender != null)
+        {
+            trackerSender.SetChannel(channel);
+            Debug.Log("✅ TrackerSender found and channel pre-assigned");
+        }
+        else
+        {
+            Debug.LogWarning("⚠️ TrackerSender not found in scene. Pose packets will not be sent.");
+        }
 
         // ----------------------------
         // 1️⃣ CRIAR OFFER
@@ -229,12 +299,10 @@ public class WebRTCSignalingUnity : MonoBehaviour
     private void OnRemoteVideoReceived(Texture texture)
     {
         remoteVideoTexture = texture;
+        hasPendingVideoFrame = true;
 
-        if (remoteVideoRawImage != null)
-            remoteVideoRawImage.texture = texture;
-
-        if (remoteVideoRenderer != null)
-            remoteVideoRenderer.material.mainTexture = texture;
+        if (texture != null)
+            Debug.Log($"🧩 OnRemoteVideoReceived: {texture.width}x{texture.height}");
     }
 
     // ==========================================================
@@ -286,6 +354,9 @@ public class WebRTCSignalingUnity : MonoBehaviour
     {
         if (remoteVideoTrack != null)
             remoteVideoTrack.OnVideoReceived -= OnRemoteVideoReceived;
+
+        if (webRtcUpdateCoroutine != null)
+            StopCoroutine(webRtcUpdateCoroutine);
 
         channel?.Close();
         pc?.Close();

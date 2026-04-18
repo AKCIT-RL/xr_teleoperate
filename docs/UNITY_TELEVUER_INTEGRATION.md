@@ -12,6 +12,14 @@ This document describes how to run teleoperation using Unity wrist tracking whil
   - `--unity-host` (default `0.0.0.0`)
   - `--unity-port` (default `8765`)
 
+## Video Display Mode
+
+The recommended display target is a 3D Quad with a `Renderer` only.
+
+- Use an unlit material for the Quad.
+- Assign the Quad renderer to `remoteVideoRenderer` in [WebRTCSignalingUnity.cs](../WebRTCSignalingUnity.cs).
+- Do not use `RawImage` for the current setup.
+
 ## Data contract (Unity -> Python)
 
 Unity must send JSON messages with:
@@ -51,6 +59,14 @@ python teleop/teleop_hand_and_arm.py \
   --arm G1_29 \
   --ee dex1 \
   --img-server-ip 172.20.10.2
+
+## Unity Scene Setup
+
+1. Create a `Quad` in the scene and place it in front of the XR camera.
+2. Assign an unlit material to the Quad.
+3. Drag the Quad's `Renderer` to `remoteVideoRenderer` in [WebRTCSignalingUnity.cs](../WebRTCSignalingUnity.cs).
+4. Leave `remoteVideoRenderer` as the only video target.
+5. Keep `TrackerSender` assigned in the same GameObject or via Inspector.
 ```
 
 ## Next extension points

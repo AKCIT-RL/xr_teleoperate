@@ -16,9 +16,10 @@ This document describes how to run teleoperation using Unity wrist tracking whil
 
 The recommended display target is a 3D Quad with a `Renderer` only.
 
-- Use an unlit material for the Quad.
+- Use the stereo side-by-side shader at [unity/Assets/Shaders/XRTeleopStereoSbs.shader](../unity/Assets/Shaders/XRTeleopStereoSbs.shader) on the Quad material.
 - Assign the Quad renderer to `remoteVideoRenderer` in [WebRTCSignalingUnity.cs](../WebRTCSignalingUnity.cs).
 - Do not use `RawImage` for the current setup.
+- If you want monoscopic preview instead of stereo, keep the default material and omit `--stereo-video`.
 
 ## Data contract (Unity -> Python)
 
@@ -59,6 +60,50 @@ python teleop/teleop_hand_and_arm.py \
   --arm G1_29 \
   --ee dex1 \
   --img-server-ip 172.20.10.2
+```
+
+## Simulation Commands (Current Pipeline)
+
+Use two terminals.
+
+Terminal A (WebRTC signaling + video stream to Unity):
+
+```bash
+python python_webrtc.py \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --test-image C:/Users/muril/OneDrive/Desktop/input.jpg \
+  --stereo-video \
+  --video-fps 30 \
+  --forward-url ws://127.0.0.1:9876
+```
+
+If you prefer live camera from teleimager instead of test image:
+
+```bash
+python python_webrtc.py \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --send-video \
+  --stereo-video \
+  --img-server-ip 192.168.123.164 \
+  --video-fps 30 \
+  --forward-url ws://127.0.0.1:9876
+```
+
+Terminal B (teleop simulation using Unity tracking bridge):
+
+```bash
+python teleop/teleop_hand_and_arm.py \
+  --sim \
+  --tracking-source unity \
+  --unity-host 127.0.0.1 \
+  --unity-port 9876 \
+  --input-mode hand \
+  --arm G1_29 \
+  --ee dex1 \
+  --img-server-ip 192.168.123.164
+```
 
 ## Unity Scene Setup
 
@@ -67,7 +112,6 @@ python teleop/teleop_hand_and_arm.py \
 3. Drag the Quad's `Renderer` to `remoteVideoRenderer` in [WebRTCSignalingUnity.cs](../WebRTCSignalingUnity.cs).
 4. Leave `remoteVideoRenderer` as the only video target.
 5. Keep `TrackerSender` assigned in the same GameObject or via Inspector.
-```
 
 ## Next extension points
 
@@ -76,3 +120,65 @@ To reach full parity with Televuer, add these fields to Unity payload and map th
 - Hand keypoints for `left_hand_pos` and `right_hand_pos` (25x3 each).
 - Controller state fields (`*_thumbstickValue`, trigger values, A button).
 - Optional pinch metrics for dex1 hand mode.
+
+# Running Simulation 
+
+## Terminal A: Isaac Sim with stereo head camera
+python sim_main.py \
+  --device cpu \
+  --enable_cameras \
+  --task Isaac-PickPlace-Cylinder-G129-Dex1-Joint \
+  --enable_dex1_dds \
+  --robot_type g129
+
+## Terminal B: WebRTC with stereo preservation
+python python_webrtc.py \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --send-video \
+  --stereo-video \
+  --img-server-ip 127.0.0.1 \
+  --forward-url ws://127.0.0.1:9876
+
+## Terminal C: Teleop bridge (accepts stereo from Isaac via image server)
+python teleop/teleop_hand_and_arm.py \
+  --sim \
+  --tracking-source unity \
+  --unity-host 127.0.0.1 \
+  --unity-port 9876
+
+## Different Networks (Home PC <-> University)
+
+When Unity and Python are on different networks, NAT often blocks direct media paths. Use TURN.
+
+### Python signaling/ICE command (example)
+
+```bash
+python python_webrtc.py \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --send-video \
+  --stereo-video \
+  --img-server-ip 127.0.0.1 \
+  --forward-url ws://127.0.0.1:9876 \
+  --ice-server stun:stun.l.google.com:19302 \
+  --turn-url turn:YOUR_TURN_HOST:3478?transport=udp \
+  --turn-username YOUR_USER \
+  --turn-password YOUR_PASS
+```
+
+### Unity Inspector fields in `WebRTCSignalingUnity`
+
+Set these values before building/deploying:
+
+- `signalingUrl`: reachable URL for your signaling server (e.g. `ws://PUBLIC_IP_OR_DNS:8765`)
+- `stunUrls`: comma-separated STUN list (e.g. `stun:stun.l.google.com:19302`)
+- `turnUrls`: comma-separated TURN list (e.g. `turn:YOUR_TURN_HOST:3478?transport=udp`)
+- `turnUsername`: TURN username
+- `turnPassword`: TURN password
+
+### Notes
+
+- If direct P2P works, connection can go low-latency without relay.
+- If direct P2P fails, TURN relay is mandatory across strict NAT networks.
+- Keep port `8765` open on the signaling host or use a reverse proxy/tunnel.

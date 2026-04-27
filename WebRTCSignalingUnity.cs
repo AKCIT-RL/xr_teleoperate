@@ -61,6 +61,13 @@ public class WebRTCSignalingUnity : MonoBehaviour
     [Header("Tracking")]
     public TrackerSender trackerSender;
 
+    [Header("Network")]
+    public string signalingUrl = "ws://127.0.0.1:8765";
+    public string stunUrls = "stun:stun.l.google.com:19302";
+    public string turnUrls = "";
+    public string turnUsername = "";
+    public string turnPassword = "";
+
     private bool gotAnswer = false;
     private RTCSessionDescription answerDesc;
     private Coroutine webRtcUpdateCoroutine;
@@ -95,6 +102,7 @@ public class WebRTCSignalingUnity : MonoBehaviour
         if (remoteVideoRenderer != null && remoteVideoRenderer.material != null)
         {
             var mat = remoteVideoRenderer.material;
+            mat.mainTexture = texture;
 
             if (mat.HasProperty("_BaseMap"))
                 mat.SetTexture("_BaseMap", texture);
@@ -130,7 +138,7 @@ public class WebRTCSignalingUnity : MonoBehaviour
         // ----------------------------
         // 🌐 WEBSOCKET
         // ----------------------------
-        ws = new WebSocket("ws://192.168.1.20:8765");
+        ws = new WebSocket(signalingUrl);
 
         ws.OnOpen += (s, e) =>
         {
@@ -144,20 +152,52 @@ public class WebRTCSignalingUnity : MonoBehaviour
             HandleSignalingMessage(e.Data);
         };
 
-        ws.Connect();
+        try
+        {
+            ws.Connect();
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"❌ Failed to connect signaling websocket at {signalingUrl}: {e.Message}");
+            yield break;
+        }
 
         // ----------------------------
         // 🔗 CONFIG DO RTC
         // ----------------------------
+        var iceServers = new List<RTCIceServer>();
+
+        var parsedStunUrls = ParseCsvUrls(stunUrls);
+        if (parsedStunUrls.Length > 0)
+        {
+            iceServers.Add(new RTCIceServer
+            {
+                urls = parsedStunUrls
+            });
+        }
+
+        var parsedTurnUrls = ParseCsvUrls(turnUrls);
+        if (parsedTurnUrls.Length > 0)
+        {
+            iceServers.Add(new RTCIceServer
+            {
+                urls = parsedTurnUrls,
+                username = turnUsername,
+                credential = turnPassword
+            });
+        }
+
+        if (iceServers.Count == 0)
+        {
+            iceServers.Add(new RTCIceServer
+            {
+                urls = new[] { "stun:stun.l.google.com:19302" }
+            });
+        }
+
         var config = new RTCConfiguration
         {
-            iceServers = new[]
-            {
-                new RTCIceServer
-                {
-                    urls = new[] { "stun:stun.l.google.com:19302" }
-                }
-            }
+            iceServers = iceServers.ToArray()
         };
 
         pc = new RTCPeerConnection(ref config);
@@ -348,6 +388,18 @@ public class WebRTCSignalingUnity : MonoBehaviour
             var cand = new RTCIceCandidate(tmp);
             pc.AddIceCandidate(cand);
         }
+    }
+
+    private static string[] ParseCsvUrls(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return Array.Empty<string>();
+
+        return raw
+            .Split(',')
+            .Select(s => s.Trim())
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToArray();
     }
 
     private void OnDestroy()

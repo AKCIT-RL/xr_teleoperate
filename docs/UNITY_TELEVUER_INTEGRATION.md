@@ -76,3 +76,30 @@ To reach full parity with Televuer, add these fields to Unity payload and map th
 - Hand keypoints for `left_hand_pos` and `right_hand_pos` (25x3 each).
 - Controller state fields (`*_thumbstickValue`, trigger values, A button).
 - Optional pinch metrics for dex1 hand mode.
+
+
+# Running Simulation 
+
+## Terminal A: Isaac Sim with stereo head camera
+python sim_main.py \
+  --device cpu \
+  --enable_cameras \
+  --task Isaac-PickPlace-Cylinder-G129-Dex1-Joint \
+  --enable_dex1_dds \
+  --robot_type g129
+
+## Terminal B: WebRTC with stereo preservation
+python python_webrtc.py \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --send-video \
+  --stereo-video \
+  --img-server-ip 127.0.0.1 \
+  --forward-url ws://127.0.0.1:9876
+
+## Terminal C: Teleop bridge (accepts stereo from Isaac via image server)
+python teleop/teleop_hand_and_arm.py \
+  --sim \
+  --tracking-source unity \
+  --unity-host 127.0.0.1 \
+  --unity-port 9876

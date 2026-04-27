@@ -19,7 +19,7 @@ video_track = None
 
 
 class ImageClientVideoTrack(VideoStreamTrack):
-    def __init__(self, img_server_ip: str, fps: float = 30.0):
+    def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False):
         super().__init__()
         from teleimager.image_client import ImageClient
 
@@ -27,6 +27,7 @@ class ImageClientVideoTrack(VideoStreamTrack):
         self._fps = max(1.0, fps)
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
+        self._preserve_stereo = preserve_stereo
 
     async def recv(self):
         # Use thread offload because image client access is blocking.
@@ -35,8 +36,8 @@ class ImageClientVideoTrack(VideoStreamTrack):
         if head_img is None:
             head_img = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        # If binocular image is side-by-side, send left half first.
-        if len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
+        # Keep the binocular pair intact when Unity should render stereo side-by-side.
+        if not self._preserve_stereo and len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
             head_img = head_img[:, : head_img.shape[1] // 2]
 
         # OpenCV-style frames are usually BGR.
@@ -54,11 +55,12 @@ class ImageClientVideoTrack(VideoStreamTrack):
 
 
 class StaticImageVideoTrack(VideoStreamTrack):
-    def __init__(self, image_path: str, fps: float = 30.0):
+    def __init__(self, image_path: str, fps: float = 30.0, preserve_stereo: bool = False):
         super().__init__()
         self._fps = max(1.0, fps)
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
+        self._preserve_stereo = preserve_stereo
 
         # Decode one frame from a local image file using PyAV/FFmpeg.
         container = av.open(image_path)
@@ -67,7 +69,11 @@ class StaticImageVideoTrack(VideoStreamTrack):
         container.close()
 
     async def recv(self):
-        frame = VideoFrame.from_ndarray(self._image, format="bgr24")
+        image = self._image
+        if not self._preserve_stereo and len(image.shape) == 3 and image.shape[1] >= 2 * image.shape[0]:
+            image = image[:, : image.shape[1] // 2]
+
+        frame = VideoFrame.from_ndarray(image, format="bgr24")
         frame.pts = self._pts
         frame.time_base = self._time_base
         self._pts += 1
@@ -318,6 +324,7 @@ async def main():
     parser.add_argument("--port", type=int, default=8765, help="Signaling server port")
     parser.add_argument("--forward-url", type=str, default=None, help="Optional websocket URL to forward Unity pose payloads")
     parser.add_argument("--send-video", action="store_true", help="Send head camera video track to Unity over WebRTC")
+    parser.add_argument("--stereo-video", action="store_true", help="Keep binocular frames side-by-side instead of cropping to one eye")
     parser.add_argument("--test-image", type=str, default=None, help="Optional local image path (jpg/png) to stream as repeated video frames")
     parser.add_argument("--img-server-ip", type=str, default="127.0.0.1", help="Image server IP for video source")
     parser.add_argument("--video-fps", type=float, default=30.0, help="Video FPS sent to Unity")
@@ -328,9 +335,9 @@ async def main():
         forwarder.start()
 
     if args.test_image:
-        video_track = StaticImageVideoTrack(args.test_image, fps=args.video_fps)
+        video_track = StaticImageVideoTrack(args.test_image, fps=args.video_fps, preserve_stereo=args.stereo_video)
     elif args.send_video:
-        video_track = ImageClientVideoTrack(args.img_server_ip, fps=args.video_fps)
+        video_track = ImageClientVideoTrack(args.img_server_ip, fps=args.video_fps, preserve_stereo=args.stereo_video)
 
     server = await websockets.serve(handle_client, args.host, args.port)
     print(f"🚀 Servidor rodando em ws://{args.host}:{args.port}")
@@ -340,6 +347,8 @@ async def main():
         print(f"🎥 Video enabled from image server {args.img_server_ip}")
     elif args.test_image:
         print(f"🖼️  Test image video enabled from {args.test_image}")
+    if args.stereo_video:
+        print("🥽 Stereo side-by-side mode enabled")
 
     try:
         await asyncio.Future()

@@ -95,6 +95,7 @@ public class WebRTCSignalingUnity : MonoBehaviour
         if (remoteVideoRenderer != null && remoteVideoRenderer.material != null)
         {
             var mat = remoteVideoRenderer.material;
+            mat.mainTexture = texture;
 
             if (mat.HasProperty("_BaseMap"))
                 mat.SetTexture("_BaseMap", texture);
@@ -130,6 +131,7 @@ public class WebRTCSignalingUnity : MonoBehaviour
         // ----------------------------
         // 🌐 WEBSOCKET
         // ----------------------------
+        //ws = new WebSocket("ws://192.168.1.20:8765");
         ws = new WebSocket("ws://192.168.1.20:8765");
 
         ws.OnOpen += (s, e) =>

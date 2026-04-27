@@ -28,6 +28,7 @@ class ImageClientVideoTrack(VideoStreamTrack):
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
         self._preserve_stereo = preserve_stereo
+        self._debug_saved = False
 
     async def recv(self):
         # Use thread offload because image client access is blocking.
@@ -39,6 +40,14 @@ class ImageClientVideoTrack(VideoStreamTrack):
         # Keep the binocular pair intact when Unity should render stereo side-by-side.
         if not self._preserve_stereo and len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
             head_img = head_img[:, : head_img.shape[1] // 2]
+
+        # DEBUG: Save one frame to inspect if stereo is being sent
+        if not self._debug_saved:
+            import cv2
+            debug_path = "/home/teleop/workspace/unity_frame_debug.jpg"
+            cv2.imwrite(debug_path, head_img)
+            logging.info(f"🐛 DEBUG: Saved frame to {debug_path} - Shape: {head_img.shape}, Stereo preserved: {self._preserve_stereo}")
+            self._debug_saved = True
 
         # OpenCV-style frames are usually BGR.
         frame = VideoFrame.from_ndarray(head_img, format="bgr24")

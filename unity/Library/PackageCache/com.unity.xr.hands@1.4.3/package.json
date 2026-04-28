@@ -1,0 +1,48 @@
+{
+  "name": "com.unity.xr.hands",
+  "displayName": "XR Hands",
+  "version": "1.4.3",
+  "unity": "2021.3",
+  "description": "Surfaces the cross-platform subsystem API for hand-tracking. Implementations of providers will be found in the package for that platform.",
+  "keywords": [
+    "xr",
+    "vr",
+    "virtual",
+    "reality",
+    "hand",
+    "tracking",
+    "hands",
+    "subsystem"
+  ],
+  "dependencies": {
+    "com.unity.inputsystem": "1.3.0",
+    "com.unity.modules.xr": "1.0.0",
+    "com.unity.xr.core-utils": "2.2.0",
+    "com.unity.xr.management": "4.0.1",
+    "com.unity.mathematics": "1.2.6"
+  },
+  "_upm": {
+    "changelog": "### Changed\n\n- Allows for ignoring tip-most knucle when calculating full curl when the `XRFingerShapeConfiguration`'s `minimumFullCurlDegrees3` or `maximumFullCurlDegrees3` is non-positive.\n\n### Fixed\n\n- Fixed reference direction when using `XRHandUserRelativeDirection.NoseDirection` for gesture detection.\n- Fixed runtime invalidation, which resulted in crashes on some OpenXR runtimes. Runtime is invalidated when the `XrInstance` is destroyed.\n- Fixed issue where XrHands would try to update hand joints with an uninitialized XrTime value of XR_INFINITE_DURATION.\n- Updated app space change behavior for XR provider to no longer destroy hand trackers only to recreate them the next update."
+  },
+  "upmCi": {
+    "footprint": "8579a993d40f48ab6c7216f50d61cffe93e64e46"
+  },
+  "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.xr.hands@1.4/manual/index.html",
+  "repository": {
+    "url": "https://github.cds.internal.unity3d.com/unity/com.unity.xr.hands.git",
+    "type": "git",
+    "revision": "eeeaae4a5337b6b83feeb482d11efb0e659c573f"
+  },
+  "samples": [
+    {
+      "displayName": "Gestures",
+      "description": "Sample showing how to detect and debug hand gestures.",
+      "path": "Samples~/Gestures"
+    },
+    {
+      "displayName": "HandVisualizer",
+      "description": "Basic sample showing how visualize hands.",
+      "path": "Samples~/HandVisualizer"
+    }
+  ]
+}

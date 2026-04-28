@@ -10,3 +10,6 @@
 [submodule "teleop/robot_control/inspire_hand_ws"]
 	path = teleop/robot_control/inspire_hand_ws
 	url = https://github.com/NaCl-1374/inspire_hand_ws.git
+[submodule "Unity"]
+	path = Unity
+	url = https://github.com/AKCIT-RL/Unity_xr_teleoperate.git

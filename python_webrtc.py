@@ -5,22 +5,26 @@ import logging
 import websockets
 import fractions
 import av
+import cv2
 
 import numpy as np
 from av import VideoFrame
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer, VideoStreamTrack
+from aiortc.rtcrtpsender import RTCRtpSender
 
 logging.basicConfig(level=logging.INFO)
 
 pcs = set()
 forwarder = None
 video_track = None
+video_debug = False
+video_codec = "auto"
 rtc_config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
 
 
 class ImageClientVideoTrack(VideoStreamTrack):
-    def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False):
+    def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None):
         super().__init__()
         from teleimager.image_client import ImageClient
 
@@ -29,6 +33,10 @@ class ImageClientVideoTrack(VideoStreamTrack):
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
         self._preserve_stereo = preserve_stereo
+        self._max_width = max_width
+        self._max_height = max_height
+        self._frame_count = 0
+        self._last_log_time = 0
 
     async def recv(self):
         # Use thread offload because image client access is blocking.
@@ -41,11 +49,31 @@ class ImageClientVideoTrack(VideoStreamTrack):
         if not self._preserve_stereo and len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
             head_img = head_img[:, : head_img.shape[1] // 2]
 
+        if self._max_width is not None or self._max_height is not None:
+            height, width = head_img.shape[:2]
+            target_width = self._max_width if self._max_width is not None else width
+            target_height = self._max_height if self._max_height is not None else height
+            scale = min(target_width / width, target_height / height)
+            if scale < 1.0:
+                resized_width = max(2, int(width * scale))
+                resized_height = max(2, int(height * scale))
+                head_img = cv2.resize(head_img, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
         # OpenCV-style frames are usually BGR.
         frame = VideoFrame.from_ndarray(head_img, format="bgr24")
         frame.pts = self._pts
         frame.time_base = self._time_base
         self._pts += 1
+        self._frame_count += 1
+
+        # Diagnostic logging every 30 frames (1 second at 30fps)
+        import time
+        now = time.time()
+        if now - self._last_log_time >= 1.0:
+            logging.info(f"[ImageClientVideoTrack] sent {self._frame_count} frames, latest shape: {head_img.shape}")
+            self._frame_count = 0
+            self._last_log_time = now
+
         return frame
 
     def close(self):
@@ -56,12 +84,14 @@ class ImageClientVideoTrack(VideoStreamTrack):
 
 
 class StaticImageVideoTrack(VideoStreamTrack):
-    def __init__(self, image_path: str, fps: float = 30.0, preserve_stereo: bool = False):
+    def __init__(self, image_path: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None):
         super().__init__()
         self._fps = max(1.0, fps)
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
         self._preserve_stereo = preserve_stereo
+        self._max_width = max_width
+        self._max_height = max_height
 
         # Decode one frame from a local image file using PyAV/FFmpeg.
         container = av.open(image_path)
@@ -69,15 +99,38 @@ class StaticImageVideoTrack(VideoStreamTrack):
         self._image = frame.to_ndarray(format="bgr24")
         container.close()
 
+        self._frame_count = 0
+        self._last_log_time = 0
+
     async def recv(self):
         image = self._image
         if not self._preserve_stereo and len(image.shape) == 3 and image.shape[1] >= 2 * image.shape[0]:
             image = image[:, : image.shape[1] // 2]
 
+        if self._max_width is not None or self._max_height is not None:
+            height, width = image.shape[:2]
+            target_width = self._max_width if self._max_width is not None else width
+            target_height = self._max_height if self._max_height is not None else height
+            scale = min(target_width / width, target_height / height)
+            if scale < 1.0:
+                resized_width = max(2, int(width * scale))
+                resized_height = max(2, int(height * scale))
+                image = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
         frame = VideoFrame.from_ndarray(image, format="bgr24")
         frame.pts = self._pts
         frame.time_base = self._time_base
         self._pts += 1
+        self._frame_count += 1
+
+        # Diagnostic logging every 30 frames (1 second at 30fps)
+        import time
+        now = time.time()
+        if now - self._last_log_time >= 1.0:
+            logging.info(f"[StaticImageVideoTrack] sent {self._frame_count} frames, image shape: {image.shape}")
+            self._frame_count = 0
+            self._last_log_time = now
+
         await asyncio.sleep(1.0 / self._fps)
         return frame
 
@@ -181,6 +234,29 @@ def clean_sdp_for_unity(sdp, candidates=None):
             continue
         cleaned.append(line)
     return "\r\n".join(cleaned)
+
+
+def apply_video_codec_preferences(transceiver):
+    try:
+        capabilities = RTCRtpSender.getCapabilities("video")
+        pref = (video_codec or "auto").lower()
+
+        if pref == "h264":
+            codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/H264"]
+        elif pref == "vp8":
+            codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/VP8"]
+        else:
+            codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/H264"]
+            if not codecs:
+                codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/VP8"]
+
+        if codecs:
+            transceiver.setCodecPreferences(codecs)
+            logging.info(f"[VIDEO-DEBUG] Using codec preference: {pref} ({[c.mimeType for c in codecs]})")
+        else:
+            logging.warning(f"[VIDEO-DEBUG] No preferred video codec found for preference '{pref}', using default negotiation")
+    except Exception as e:
+        logging.warning(f"[VIDEO-DEBUG] Codec preference application failed, continuing with default negotiation: {e}")
 # ------------------------------
 # Handler WebSocket
 # ------------------------------
@@ -261,8 +337,15 @@ async def handle_client(websocket):
 
                 if video_track is not None:
                     if "m=video" in data["sdp"]:
-                        pc.addTrack(video_track)
+                        sender = pc.addTrack(video_track)
+                        transceiver = next((t for t in pc.getTransceivers() if t.sender == sender), None)
+                        if transceiver is not None:
+                            apply_video_codec_preferences(transceiver)
+                        else:
+                            print("⚠️ Não foi possível localizar o transceiver do video sender; usando negociação padrão.")
                         print("🎥 Video track adicionada ao PeerConnection")
+                        if video_debug:
+                            print("[VIDEO-DEBUG] Video track successfully registered with peer connection")
                     else:
                         print("⚠️ Offer sem m=video; Unity precisa solicitar vídeo (AddTransceiver RecvOnly).")
 
@@ -318,6 +401,7 @@ async def handle_client(websocket):
 # ------------------------------
 async def main():
     global forwarder, video_track, rtc_config
+    global video_debug, video_codec
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Signaling server host")
@@ -328,6 +412,9 @@ async def main():
     parser.add_argument("--test-image", type=str, default=None, help="Optional local image path (jpg/png) to stream as repeated video frames")
     parser.add_argument("--img-server-ip", type=str, default="127.0.0.1", help="Image server IP for video source")
     parser.add_argument("--video-fps", type=float, default=30.0, help="Video FPS sent to Unity")
+    parser.add_argument("--video-max-width", type=int, default=None, help="Optional maximum video width for bandwidth-constrained links")
+    parser.add_argument("--video-max-height", type=int, default=None, help="Optional maximum video height for bandwidth-constrained links")
+    parser.add_argument("--video-codec", type=str, default="auto", choices=["auto", "h264", "vp8"], help="Preferred video codec for Unity delivery")
     parser.add_argument(
         "--ice-server",
         action="append",
@@ -337,7 +424,11 @@ async def main():
     parser.add_argument("--turn-url", type=str, default=None, help="TURN URL, e.g. turn:turn.example.com:3478?transport=udp")
     parser.add_argument("--turn-username", type=str, default=None, help="TURN username")
     parser.add_argument("--turn-password", type=str, default=None, help="TURN password")
+    parser.add_argument("--video-debug", action="store_true", help="Enable verbose video transmission logging")
     args = parser.parse_args()
+
+    video_debug = args.video_debug
+    video_codec = args.video_codec
 
     ice_urls = args.ice_server if args.ice_server else ["stun:stun.l.google.com:19302"]
     ice_servers = [RTCIceServer(urls=[url]) for url in ice_urls]
@@ -360,9 +451,21 @@ async def main():
         forwarder.start()
 
     if args.test_image:
-        video_track = StaticImageVideoTrack(args.test_image, fps=args.video_fps, preserve_stereo=args.stereo_video)
+        video_track = StaticImageVideoTrack(
+            args.test_image,
+            fps=args.video_fps,
+            preserve_stereo=args.stereo_video,
+            max_width=args.video_max_width,
+            max_height=args.video_max_height,
+        )
     elif args.send_video:
-        video_track = ImageClientVideoTrack(args.img_server_ip, fps=args.video_fps, preserve_stereo=args.stereo_video)
+        video_track = ImageClientVideoTrack(
+            args.img_server_ip,
+            fps=args.video_fps,
+            preserve_stereo=args.stereo_video,
+            max_width=args.video_max_width,
+            max_height=args.video_max_height,
+        )
 
     server = await websockets.serve(handle_client, args.host, args.port)
     print(f"🚀 Servidor rodando em ws://{args.host}:{args.port}")
@@ -372,6 +475,9 @@ async def main():
         print(f"🎥 Video enabled from image server {args.img_server_ip}")
     elif args.test_image:
         print(f"🖼️  Test image video enabled from {args.test_image}")
+    if args.video_max_width or args.video_max_height:
+        print(f"📦 Video resize cap enabled: max_width={args.video_max_width}, max_height={args.video_max_height}")
+    print(f"🎞️  Video codec preference: {args.video_codec}")
     if args.stereo_video:
         print("🥽 Stereo side-by-side mode enabled")
     print("🧭 ICE servers configured:")

@@ -54,9 +54,6 @@ public class WebRTCSignalingUnity : MonoBehaviour
     private volatile bool hasPendingVideoFrame;
     private int appliedVideoFrames = 0;
     private float lastVideoLogTime = 0f;
-    private int onTrackCallCount = 0;
-    private int onVideoReceivedCallCount = 0;
-    private float connectionStartTime = 0f;
 
     [Header("Video Target")]
     public Renderer remoteVideoRenderer;
@@ -84,19 +81,17 @@ public class WebRTCSignalingUnity : MonoBehaviour
 
     void Update()
     {
-        // Tailscale diagnostic: log callback status periodically
-        if (Time.unscaledTime - lastVideoLogTime > 2.0f)
-        {
-            float elapsed = Time.unscaledTime - connectionStartTime;
-            Debug.Log($"[TAILSCALE-DIAGNOSTIC] elapsed={elapsed:F1}s | onTrackCalls={onTrackCallCount} | onVideoReceivedCalls={onVideoReceivedCallCount} | appliedFrames={appliedVideoFrames} | textureNull={remoteVideoTexture == null}");
-            lastVideoLogTime = Time.unscaledTime;
-        }
-
         if (!hasPendingVideoFrame || remoteVideoTexture == null)
             return;
 
         ApplyRemoteTexture(remoteVideoTexture);
         appliedVideoFrames++;
+
+        if (Time.unscaledTime - lastVideoLogTime > 1.0f)
+        {
+            Debug.Log($"🎞️ Remote video frames applied: {appliedVideoFrames}, texture: {remoteVideoTexture.width}x{remoteVideoTexture.height}");
+            lastVideoLogTime = Time.unscaledTime;
+        }
 
         hasPendingVideoFrame = false;
     }
@@ -208,23 +203,15 @@ public class WebRTCSignalingUnity : MonoBehaviour
         pc = new RTCPeerConnection(ref config);
 
         pc.OnConnectionStateChange = s =>
-        {
-            Debug.Log($"🔗 Connection State: {s}");
-            if (s == RTCPeerConnectionState.Connected)
-            {
-                connectionStartTime = Time.unscaledTime;
-                Debug.Log("[TAILSCALE-DIAGNOSTIC] RTCPeerConnection CONNECTED - starting video callback monitoring");
-            }
-        };
+            Debug.Log("🔗 Connection State: " + s);
 
         pc.OnIceConnectionChange = state =>
         {
-            Debug.Log($"🧊 ICE State: {state}");
+            Debug.Log("🧊 ICE State: " + state);
 
             if (state == RTCIceConnectionState.Connected)
             {
                 Debug.Log("✅ ICE Connected, DataChannel should be open now!");
-                Debug.Log($"[TAILSCALE-DIAGNOSTIC] ICE CONNECTED - remoteVideoTrack != null: {remoteVideoTrack != null}");
 
                 if (channel.ReadyState == RTCDataChannelState.Open)
                 {
@@ -260,20 +247,11 @@ public class WebRTCSignalingUnity : MonoBehaviour
 
         pc.OnTrack = e =>
         {
-            onTrackCallCount++;
-            Debug.Log($"[TAILSCALE-DIAGNOSTIC] OnTrack called (count={onTrackCallCount}), track kind: {e.Track.Kind}");
-            
             if (e.Track is VideoStreamTrack video)
             {
                 Debug.Log("🎥 Video track recebida do Python");
                 remoteVideoTrack = video;
-                Debug.Log($"[TAILSCALE-DIAGNOSTIC] Subscribing to OnVideoReceived callback on track: {video}");
                 remoteVideoTrack.OnVideoReceived += OnRemoteVideoReceived;
-                Debug.Log("[TAILSCALE-DIAGNOSTIC] OnVideoReceived subscription complete");
-            }
-            else
-            {
-                Debug.Log($"[TAILSCALE-DIAGNOSTIC] OnTrack called but not a VideoStreamTrack, it's: {e.Track.GetType()}");
             }
         };
 
@@ -360,17 +338,11 @@ public class WebRTCSignalingUnity : MonoBehaviour
 
     private void OnRemoteVideoReceived(Texture texture)
     {
-        onVideoReceivedCallCount++;
+        remoteVideoTexture = texture;
+        hasPendingVideoFrame = true;
+
         if (texture != null)
-        {
-            Debug.Log($"[TAILSCALE-DIAGNOSTIC] OnRemoteVideoReceived called (count={onVideoReceivedCallCount}): {texture.width}x{texture.height}");
-            remoteVideoTexture = texture;
-            hasPendingVideoFrame = true;
-        }
-        else
-        {
-            Debug.LogWarning($"[TAILSCALE-DIAGNOSTIC] OnRemoteVideoReceived called (count={onVideoReceivedCallCount}) with NULL texture!");
-        }
+            Debug.Log($"🧩 OnRemoteVideoReceived: {texture.width}x{texture.height}");
     }
 
     // ==========================================================

@@ -18,6 +18,10 @@ from multiprocessing import Process, Array, Value, Lock
 parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(parent2_dir)
 from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
+from teleop.robot_control.dex3_trigger_mapping import (
+    map_trigger_to_dex3,
+    normalize_trigger,
+)
 from teleop.utils.weighted_moving_filter import WeightedMovingFilter
 
 import logging_mp
@@ -33,7 +37,9 @@ kTopicDex3RightState = "rt/dex3/right/state"
 
 class Dex3_1_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, dual_hand_data_lock = None, dual_hand_state_array_out = None,
-                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False, replay=False):
+                       dual_hand_action_array_out = None, fps = 100.0, Unit_Test = False, simulation_mode = False, replay=False,
+                       input_mode: str = "hand",
+                       left_trigger_value_in = None, right_trigger_value_in = None):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -52,16 +58,40 @@ class Dex3_1_Controller:
         Unit_Test: Whether to enable unit testing
 
         simulation_mode: Whether to use simulation mode (default is False, which means using real robot)
+
+        input_mode: 'hand' (default) uses 25x3 hand landmarks + retargeting (preserves the
+            current behavior). 'controller' uses Quest3 trigger values mapped per-side via
+            `dex3_trigger_mapping.map_trigger_to_dex3` (see docs/DEX3_TRIGGER_CONTROLLER_DESIGN.md).
+
+        left_trigger_value_in / right_trigger_value_in: required when `input_mode == 'controller'`.
+            Multiprocessing `Value('d', ...)` shared between the main loop and this controller's
+            child process. Expected range follows `tv_wrapper`: 10.0 = trigger released (open),
+            0.0 = trigger fully pressed (closed). Initialize them at 10.0 to keep the hand open
+            on startup.
         """
         logger_mp.info("Initialize Dex3_1_Controller...")
+
+        if input_mode not in ("hand", "controller"):
+            raise ValueError(f"Dex3_1_Controller input_mode must be 'hand' or 'controller', got {input_mode!r}")
+        if input_mode == "controller" and (left_trigger_value_in is None or right_trigger_value_in is None):
+            raise ValueError(
+                "Dex3_1_Controller controller mode requires both left_trigger_value_in and right_trigger_value_in"
+            )
 
         self.fps = fps
         self.Unit_Test = Unit_Test
         self.simulation_mode = simulation_mode
-        if not self.Unit_Test:
-            self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
+        self.input_mode = input_mode
+        # Hand retargeting is only needed for the legacy 'hand' input mode.
+        # In 'controller' mode we synthesize joint targets directly from the trigger value,
+        # so we skip building the (heavier) retargeting pipeline.
+        if self.input_mode == "hand":
+            if not self.Unit_Test:
+                self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3)
+            else:
+                self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3_Unit_Test)
         else:
-            self.hand_retargeting = HandRetargeting(HandType.UNITREE_DEX3_Unit_Test)
+            self.hand_retargeting = None
 
         # initialize handcmd publisher and handstate subscriber
         self.LeftHandCmb_publisher = ChannelPublisher(kTopicDex3LeftCommand, HandCmd_)
@@ -91,8 +121,13 @@ class Dex3_1_Controller:
         logger_mp.info("[Dex3_1_Controller] Subscribe dds ok.")
 
         if not replay:
-            hand_control_process = Process(target=self.control_process, args=(left_hand_array_in, right_hand_array_in,  self.left_hand_state_array, self.right_hand_state_array,
-                                                                            dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out))
+            hand_control_process = Process(
+                target=self.control_process,
+                args=(left_hand_array_in, right_hand_array_in,
+                      self.left_hand_state_array, self.right_hand_state_array,
+                      dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out,
+                      self.input_mode, left_trigger_value_in, right_trigger_value_in),
+            )
             hand_control_process.daemon = True
             hand_control_process.start()
 
@@ -136,7 +171,9 @@ class Dex3_1_Controller:
         # logger_mp.debug("hand ctrl publish ok.")
     
     def control_process(self, left_hand_array_in, right_hand_array_in, left_hand_state_array, right_hand_state_array,
-                              dual_hand_data_lock = None, dual_hand_state_array_out = None, dual_hand_action_array_out = None):
+                              dual_hand_data_lock = None, dual_hand_state_array_out = None, dual_hand_action_array_out = None,
+                              input_mode: str = "hand",
+                              left_trigger_value_in = None, right_trigger_value_in = None):
         self.running = True
 
         left_q_target  = np.full(Dex3_Num_Motors, 0)
@@ -175,21 +212,37 @@ class Dex3_1_Controller:
         try:
             while self.running:
                 start_time = time.time()
-                # get dual hand state
-                with left_hand_array_in.get_lock():
-                    left_hand_data  = np.array(left_hand_array_in[:]).reshape(25, 3).copy()
-                with right_hand_array_in.get_lock():
-                    right_hand_data = np.array(right_hand_array_in[:]).reshape(25, 3).copy()
 
-                # Read left and right q_state from shared arrays
+                # Read left and right q_state from shared arrays (independent of input_mode)
                 state_data = np.concatenate((np.array(left_hand_state_array[:]), np.array(right_hand_state_array[:])))
 
-                if not np.all(right_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])): # if hand data has been initialized.
-                    ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
-                    ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
+                if input_mode == "controller":
+                    # Trigger-driven path (see docs/DEX3_TRIGGER_CONTROLLER_DESIGN.md).
+                    # Each side is fully independent: left trigger -> left hand only,
+                    # right trigger -> right hand only.
+                    with left_trigger_value_in.get_lock():
+                        left_trigger = left_trigger_value_in.value
+                    with right_trigger_value_in.get_lock():
+                        right_trigger = right_trigger_value_in.value
 
-                    left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
-                    right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
+                    alpha_left = normalize_trigger(left_trigger)
+                    alpha_right = normalize_trigger(right_trigger)
+
+                    left_q_target = map_trigger_to_dex3(alpha_left, "left")
+                    right_q_target = map_trigger_to_dex3(alpha_right, "right")
+                else:
+                    # Legacy hand-tracking path (preserved verbatim).
+                    with left_hand_array_in.get_lock():
+                        left_hand_data  = np.array(left_hand_array_in[:]).reshape(25, 3).copy()
+                    with right_hand_array_in.get_lock():
+                        right_hand_data = np.array(right_hand_array_in[:]).reshape(25, 3).copy()
+
+                    if not np.all(right_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])): # if hand data has been initialized.
+                        ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
+                        ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
+
+                        left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
+                        right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
 
                 # get dual hand action
                 action_data = np.concatenate((left_q_target, right_q_target))    

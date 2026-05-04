@@ -167,13 +167,25 @@ if __name__ == '__main__':
         # end-effector
         if args.ee == "dex3":
             from teleop.robot_control.robot_hand_unitree import Dex3_1_Controller
-            left_hand_pos_array = Array('d', 75, lock = True)      # [input]
-            right_hand_pos_array = Array('d', 75, lock = True)     # [input]
+            from teleop.robot_control.dex3_trigger_mapping import TRIGGER_VALUE_OPEN
+            left_hand_pos_array = Array('d', 75, lock = True)      # [input - hand mode]
+            right_hand_pos_array = Array('d', 75, lock = True)     # [input - hand mode]
+            # Trigger inputs for controller mode. Initialized at TRIGGER_VALUE_OPEN so the hand
+            # starts open before the first XR event arrives.
+            if args.input_mode == "controller":
+                left_trigger_value = Value('d', TRIGGER_VALUE_OPEN, lock=True)   # [input - controller mode]
+                right_trigger_value = Value('d', TRIGGER_VALUE_OPEN, lock=True)  # [input - controller mode]
+            else:
+                left_trigger_value = None
+                right_trigger_value = None
             dual_hand_data_lock = Lock()
             dual_hand_state_array = Array('d', 14, lock = False)   # [output] current left, right hand state(14) data.
             dual_hand_action_array = Array('d', 14, lock = False)  # [output] current left, right hand action(14) data.
-            hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock, 
-                                          dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim)
+            hand_ctrl = Dex3_1_Controller(left_hand_pos_array, right_hand_pos_array, dual_hand_data_lock,
+                                          dual_hand_state_array, dual_hand_action_array, simulation_mode=args.sim,
+                                          input_mode=args.input_mode,
+                                          left_trigger_value_in=left_trigger_value,
+                                          right_trigger_value_in=right_trigger_value)
         elif args.ee == "dex1":
             from teleop.robot_control.robot_hand_unitree import Dex1_1_Gripper_Controller
             left_gripper_value = Value('d', 0.0, lock=True)        # [input]
@@ -300,6 +312,14 @@ if __name__ == '__main__':
                     left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
                 with right_hand_pos_array.get_lock():
                     right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
+            elif args.ee == "dex3" and args.input_mode == "controller":
+                # Trigger-driven Dex3 path. Each side is mapped independently:
+                # left controller trigger  -> left  Dex3 hand
+                # right controller trigger -> right Dex3 hand
+                with left_trigger_value.get_lock():
+                    left_trigger_value.value = tele_data.left_ctrl_triggerValue
+                with right_trigger_value.get_lock():
+                    right_trigger_value.value = tele_data.right_ctrl_triggerValue
             elif args.ee == "dex1" and args.input_mode == "controller":
                 with left_gripper_value.get_lock():
                     left_gripper_value.value = tele_data.left_ctrl_triggerValue
@@ -357,6 +377,14 @@ if __name__ == '__main__':
                 READY = recorder.is_ready() # now ready to (2) enter RECORD_RUNNING state
                 # dex hand or gripper
                 if args.ee == "dex3" and args.input_mode == "hand":
+                    with dual_hand_data_lock:
+                        left_ee_state = dual_hand_state_array[:7]
+                        right_ee_state = dual_hand_state_array[-7:]
+                        left_hand_action = dual_hand_action_array[:7]
+                        right_hand_action = dual_hand_action_array[-7:]
+                        current_body_state = []
+                        current_body_action = []
+                elif args.ee == "dex3" and args.input_mode == "controller":
                     with dual_hand_data_lock:
                         left_ee_state = dual_hand_state_array[:7]
                         right_ee_state = dual_hand_state_array[-7:]

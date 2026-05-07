@@ -355,6 +355,11 @@ if __name__ == '__main__':
             # record data
             if args.record:
                 READY = recorder.is_ready() # now ready to (2) enter RECORD_RUNNING state
+                
+                # --- Captura global das posições de TODOS os motores ---
+                all_joints_state = arm_ctrl.get_current_motor_q().tolist()
+                current_body_action = []
+
                 # dex hand or gripper
                 if args.ee == "dex3" and args.input_mode == "hand":
                     with dual_hand_data_lock:
@@ -362,23 +367,18 @@ if __name__ == '__main__':
                         right_ee_state = dual_hand_state_array[-7:]
                         left_hand_action = dual_hand_action_array[:7]
                         right_hand_action = dual_hand_action_array[-7:]
-                        current_body_state = []
-                        current_body_action = []
                 elif args.ee == "dex1" and args.input_mode == "hand":
                     with dual_gripper_data_lock:
                         left_ee_state = [dual_gripper_state_array[0]]
                         right_ee_state = [dual_gripper_state_array[1]]
                         left_hand_action = [dual_gripper_action_array[0]]
                         right_hand_action = [dual_gripper_action_array[1]]
-                        current_body_state = []
-                        current_body_action = []
                 elif args.ee == "dex1" and args.input_mode == "controller":
                     with dual_gripper_data_lock:
                         left_ee_state = [dual_gripper_state_array[0]]
                         right_ee_state = [dual_gripper_state_array[1]]
                         left_hand_action = [dual_gripper_action_array[0]]
                         right_hand_action = [dual_gripper_action_array[1]]
-                        current_body_state = arm_ctrl.get_current_motor_q().tolist() # all joints position as body state
                         current_body_action = [-tele_data.left_ctrl_thumbstickValue[1]  * 0.3,
                                                -tele_data.left_ctrl_thumbstickValue[0]  * 0.3,
                                                -tele_data.right_ctrl_thumbstickValue[0] * 0.3]
@@ -388,22 +388,27 @@ if __name__ == '__main__':
                         right_ee_state = dual_hand_state_array[-6:]
                         left_hand_action = dual_hand_action_array[:6]
                         right_hand_action = dual_hand_action_array[-6:]
-                        current_body_state = []
-                        current_body_action = []
                 else:
                     left_ee_state = []
                     right_ee_state = []
                     left_hand_action = []
                     right_hand_action = []
-                    current_body_state = []
-                    current_body_action = []
 
                 # arm state and action
                 left_arm_state  = current_lr_arm_q[:7]
                 right_arm_state = current_lr_arm_q[-7:]
                 left_arm_action = sol_q[:7]
                 right_arm_action = sol_q[-7:]
+                
                 if RECORD_RUNNING:
+                    # Leitura da política de locomoção se estiver em simulação
+                    leg_actions = []
+                    sim_state = None
+                    if args.sim:
+                        sim_state = sim_state_subscriber.read_data()
+                        if args.motion and sim_state is not None:
+                            leg_actions = sim_state.get("action", [])
+
                     colors = {}
                     depths = {}
                     if camera_config['head_camera']['binocular']:
@@ -437,7 +442,22 @@ if __name__ == '__main__':
                                 colors[f"color_{2}"] = right_wrist_img
                             else:
                                 logger_mp.warning("Right wrist image is None!")
+                                
+                    # Conversão segura do wrist para lista se for numpy_array
+                    l_wrist = tele_data.left_wrist_pose.tolist() if hasattr(tele_data.left_wrist_pose, 'tolist') else tele_data.left_wrist_pose
+                    r_wrist = tele_data.right_wrist_pose.tolist() if hasattr(tele_data.right_wrist_pose, 'tolist') else tele_data.right_wrist_pose
+                    
                     states = {
+                        "high_level": {
+                            "left_wrist": l_wrist,
+                            "right_wrist": r_wrist,
+                            "left_hand_joints": tele_data.left_hand_pos.flatten().tolist() if tele_data.left_hand_pos is not None else [],
+                            "right_hand_joints": tele_data.right_hand_pos.flatten().tolist() if tele_data.right_hand_pos is not None else [],
+                            "left_trigger": tele_data.left_ctrl_triggerValue if args.input_mode == "controller" else tele_data.left_hand_pinchValue,
+                            "right_trigger": tele_data.right_ctrl_triggerValue if args.input_mode == "controller" else tele_data.right_hand_pinchValue,
+                            "left_stick": tele_data.left_ctrl_thumbstickValue,
+                            "right_stick": tele_data.right_ctrl_thumbstickValue,
+                        },
                         "left_arm": {                                                                    
                             "qpos":   left_arm_state.tolist(),    # numpy.array -> list
                             "qvel":   [],                          
@@ -459,19 +479,22 @@ if __name__ == '__main__':
                             "torque": [],  
                         }, 
                         "body": {
-                            "qpos": current_body_state,
+                            "qpos": [],
                         }, 
+                        "all_joints": {
+                            "qpos": all_joints_state,
+                        },
                     }
                     actions = {
                         "left_arm": {                                   
                             "qpos":   left_arm_action.tolist(),       
                             "qvel":   [],       
-                            "torque": [],      
+                            "torque": sol_tauff[:7].tolist() if sol_tauff is not None else [],      
                         }, 
                         "right_arm": {                                   
                             "qpos":   right_arm_action.tolist(),       
                             "qvel":   [],       
-                            "torque": [],       
+                            "torque": sol_tauff[-7:].tolist() if sol_tauff is not None else [],       
                         },                         
                         "left_ee": {                                   
                             "qpos":   left_hand_action,       
@@ -486,9 +509,11 @@ if __name__ == '__main__':
                         "body": {
                             "qpos": current_body_action,
                         }, 
+                        "legs": {
+                            "qpos": leg_actions,
+                        },
                     }
                     if args.sim:
-                        sim_state = sim_state_subscriber.read_data()            
                         recorder.add_item(colors=colors, depths=depths, states=states, actions=actions, sim_state=sim_state)
                     else:
                         recorder.add_item(colors=colors, depths=depths, states=states, actions=actions)

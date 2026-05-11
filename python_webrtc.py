@@ -22,7 +22,6 @@ video_debug = False
 video_codec = "auto"
 rtc_config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
 
-
 class ImageClientVideoTrack(VideoStreamTrack):
     def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None):
         super().__init__()
@@ -198,6 +197,15 @@ def is_valid_candidate(ip):
         return False
     return True
 
+def force_ice_host(candidate):
+    """
+    If --ice-host was given, overwrite candidate.ip with it.
+    """
+    if args.ice_host:
+        print(f"[ICE OVERRIDE] replacing {candidate.ip} → {args.ice_host}")
+        candidate.ip = args.ice_host
+    return candidate
+
 def candidate_from_sdp(sdp: str) -> RTCIceCandidate:
     bits = sdp.split()
     candidate = RTCIceCandidate(
@@ -301,20 +309,22 @@ async def handle_client(websocket):
 
     @pc.on("icecandidate")
     async def on_icecandidate(event):
-        if event.candidate:
-            if not is_valid_candidate(event.candidate.ip):
-                print("🚫 Ignorando candidate inválido (não enviado):", event.candidate.ip)
+        if candidate:
+            candidate = force_ice_host(candidate)
+            print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+            if not is_valid_candidate(cand.ip):
+                print("🚫 Ignorando candidate inválido:", cand.ip)
                 return
 
             await websocket.send(json.dumps({
                 "type": "candidate",
-                "candidate": event.candidate.to_sdp(),
-                "sdpMid": event.candidate.sdpMid,
-                "sdpMLineIndex": event.candidate.sdpMLineIndex,
+                "candidate": cand.to_sdp(),
+                "sdpMid": cand.sdpMid,
+                "sdpMLineIndex": cand.sdpMLineIndex,
             }))
         else:
             await websocket.send(json.dumps({"type": "candidate", "candidate": None}))
-            print("A")
 
     # ------------------------------
     # Mensagens WebSocket
@@ -421,6 +431,7 @@ async def main():
         default=None,
         help="ICE URL to use (repeat flag for multiple entries), e.g. stun:stun.l.google.com:19302",
     )
+    parser.add_argument("--ice-host", default=None, help="Force ICE host candidate IP (e.g. Tailscale IP)")
     parser.add_argument("--turn-url", type=str, default=None, help="TURN URL, e.g. turn:turn.example.com:3478?transport=udp")
     parser.add_argument("--turn-username", type=str, default=None, help="TURN username")
     parser.add_argument("--turn-password", type=str, default=None, help="TURN password")

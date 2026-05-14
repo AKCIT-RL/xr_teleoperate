@@ -1,4 +1,4 @@
-# Paper Draft — Integração Unity no `xr_teleoperate`
+# Paper Draft — Integração Unity no `xr_teleoperate` - Deadline Conecta CEIA
 
 ## 1. Introdução
 
@@ -115,17 +115,13 @@ Comparar a tarefa em ambos pipelines (original e Unity).
 
 **Métricas:**
 - tempo para conclusão;
-- número de correções manuais;
-- erros de alinhamento;
 - taxa de sucesso;
-- carga subjetiva (NASA-TLX ou similar).
 
 ### 8.2 Avaliação de Imersão
 Medir a percepção de presença e conforto visual.
 
 **Métricas:**
 - questionários de presença;
-- Likert de conforto;
 - preferência entre interfaces;
 - clareza do ambiente.
 
@@ -134,15 +130,12 @@ Avaliar desempenho do pipeline de comunicação.
 
 **Métricas:**
 - latência de ponta a ponta;
-- perda de frames;
 - reconexões;
 - estabilidade do tracking.
 
 ### 8.4 Estudo de Coleta de Dados
-Verificar consistência temporal e completude de episódios.
+Coleta de dados dos participantes.
 
 **Métricas:**
-- sincronização pose/ação/imagem;
-- completude de metadados;
-- incidência de episódios corrompidos;
+- gravação dos dados com pose/imagem;
 - reprodutibilidade.

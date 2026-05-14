@@ -2,6 +2,7 @@ import asyncio
 import argparse
 import json
 import logging
+import re
 import websockets
 import fractions
 import av
@@ -20,6 +21,7 @@ forwarder = None
 video_track = None
 video_debug = False
 video_codec = "auto"
+ice_host_override = None
 rtc_config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
 
 class ImageClientVideoTrack(VideoStreamTrack):
@@ -201,9 +203,9 @@ def force_ice_host(candidate):
     """
     If --ice-host was given, overwrite candidate.ip with it.
     """
-    if args.ice_host:
-        print(f"[ICE OVERRIDE] replacing {candidate.ip} → {args.ice_host}")
-        candidate.ip = args.ice_host
+    if ice_host_override and getattr(candidate, "type", None) == "host":
+        print(f"[ICE OVERRIDE] replacing {candidate.ip} → {ice_host_override}")
+        candidate.ip = ice_host_override
     return candidate
 
 def candidate_from_sdp(sdp: str) -> RTCIceCandidate:
@@ -244,6 +246,23 @@ def clean_sdp_for_unity(sdp, candidates=None):
     return "\r\n".join(cleaned)
 
 
+def rewrite_ice_host_in_sdp(sdp):
+    if not ice_host_override:
+        return sdp
+
+    rewritten = []
+    candidate_line = re.compile(r"^(a=candidate:[^ ]+ \d+ \w+ \d+ )([^ ]+)( .*)$")
+
+    for line in sdp.splitlines():
+        if line.startswith("a=candidate:") and " typ host " in line:
+            match = candidate_line.match(line)
+            if match:
+                line = f"{match.group(1)}{ice_host_override}{match.group(3)}"
+        rewritten.append(line)
+
+    return "\r\n".join(rewritten)
+
+
 def apply_video_codec_preferences(transceiver):
     try:
         capabilities = RTCRtpSender.getCapabilities("video")
@@ -254,9 +273,9 @@ def apply_video_codec_preferences(transceiver):
         elif pref == "vp8":
             codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/VP8"]
         else:
-            codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/H264"]
+            codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/VP8"]
             if not codecs:
-                codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/VP8"]
+                codecs = [codec for codec in capabilities.codecs if codec.mimeType == "video/H264"]
 
         if codecs:
             transceiver.setCodecPreferences(codecs)
@@ -308,20 +327,19 @@ async def handle_client(websocket):
                 asyncio.create_task(forwarder.enqueue(text))
 
     @pc.on("icecandidate")
-    async def on_icecandidate(event):
+    async def on_icecandidate(candidate):
         if candidate:
             candidate = force_ice_host(candidate)
-            print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 
-            if not is_valid_candidate(cand.ip):
-                print("🚫 Ignorando candidate inválido:", cand.ip)
+            if not is_valid_candidate(candidate.ip):
+                print("🚫 Ignorando candidate inválido:", candidate.ip)
                 return
 
             await websocket.send(json.dumps({
                 "type": "candidate",
-                "candidate": cand.to_sdp(),
-                "sdpMid": cand.sdpMid,
-                "sdpMLineIndex": cand.sdpMLineIndex,
+                "candidate": candidate.to_sdp(),
+                "sdpMid": candidate.sdpMid,
+                "sdpMLineIndex": candidate.sdpMLineIndex,
             }))
         else:
             await websocket.send(json.dumps({"type": "candidate", "candidate": None}))
@@ -366,6 +384,7 @@ async def handle_client(websocket):
                     await asyncio.sleep(0.1)
 
                 new_sdp = clean_sdp_for_unity(pc.localDescription.sdp)
+                new_sdp = rewrite_ice_host_in_sdp(new_sdp)
                 
                 await websocket.send(json.dumps({
                     "type": pc.localDescription.type,
@@ -412,6 +431,7 @@ async def handle_client(websocket):
 async def main():
     global forwarder, video_track, rtc_config
     global video_debug, video_codec
+    global ice_host_override
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Signaling server host")
@@ -440,6 +460,7 @@ async def main():
 
     video_debug = args.video_debug
     video_codec = args.video_codec
+    ice_host_override = args.ice_host
 
     ice_urls = args.ice_server if args.ice_server else ["stun:stun.l.google.com:19302"]
     ice_servers = [RTCIceServer(urls=[url]) for url in ice_urls]

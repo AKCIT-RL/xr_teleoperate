@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import re
+from contextlib import suppress
 import websockets
 import fractions
 import av
@@ -23,6 +24,33 @@ video_debug = False
 video_codec = "auto"
 ice_host_override = None
 rtc_config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
+unity_datachannel = None
+unity_pending_messages = []
+
+
+def send_to_unity(payload: str):
+    global unity_datachannel, unity_pending_messages
+
+    if unity_datachannel is not None and getattr(unity_datachannel, "readyState", None) == "open":
+        unity_datachannel.send(payload)
+        return
+
+    unity_pending_messages.append(payload)
+    if len(unity_pending_messages) > 64:
+        unity_pending_messages.pop(0)
+
+
+def flush_unity_pending_messages():
+    global unity_datachannel, unity_pending_messages
+
+    if unity_datachannel is None or getattr(unity_datachannel, "readyState", None) != "open":
+        return
+
+    pending = unity_pending_messages
+    unity_pending_messages = []
+    for payload in pending:
+        unity_datachannel.send(payload)
+
 
 class ImageClientVideoTrack(VideoStreamTrack):
     def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None):
@@ -167,15 +195,37 @@ class BridgeForwarder:
             try:
                 async with websockets.connect(self.url) as ws:
                     logging.info(f"Forwarder connected to {self.url}")
-                    while not self._stop.is_set():
-                        try:
-                            payload = await asyncio.wait_for(self.queue.get(), timeout=0.5)
-                        except asyncio.TimeoutError:
-                            continue
-                        await ws.send(payload)
+
+                    receiver_task = asyncio.create_task(self._receive(ws))
+                    try:
+                        while not self._stop.is_set():
+                            try:
+                                payload = await asyncio.wait_for(self.queue.get(), timeout=0.5)
+                            except asyncio.TimeoutError:
+                                continue
+                            await ws.send(payload)
+                    finally:
+                        receiver_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await receiver_task
             except Exception as e:
                 logging.warning(f"Forwarder disconnected: {e}")
                 await asyncio.sleep(1.0)
+
+    async def _receive(self, ws):
+        try:
+            async for message in ws:
+                if isinstance(message, bytes):
+                    text = message.decode("utf-8", errors="replace")
+                else:
+                    text = str(message)
+
+                if is_pose_payload(text):
+                    continue
+
+                send_to_unity(text)
+        except Exception as e:
+            logging.warning(f"Forwarder receiver disconnected: {e}")
 
 
 def is_pose_payload(message: str) -> bool:
@@ -311,6 +361,9 @@ async def handle_client(websocket):
         @channel.on("open")
         def on_open():
             print("🔥 PYTHON: DataChannel OPEN")
+            global unity_datachannel
+            unity_datachannel = channel
+            flush_unity_pending_messages()
             channel.send("Hello from Python!")
             channel.send("Oi do Python!")
 

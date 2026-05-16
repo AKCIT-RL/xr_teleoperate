@@ -1,8 +1,10 @@
 import time
 import argparse
+import json
 from multiprocessing import Value, Array, Lock
 import threading
 import logging_mp
+import numpy as np
 logging_mp.basic_config(level=logging_mp.INFO)
 logger_mp = logging_mp.get_logger(__name__)
 
@@ -68,6 +70,18 @@ def get_state() -> dict:
         "STOP": STOP,
         "READY": READY,
         "RECORD_RUNNING": RECORD_RUNNING,
+    }
+
+
+def build_haptic_alert(residual_m: float, residual_rad: float, reason: str) -> dict:
+    intensity = min(1.0, max(0.25, residual_m / 0.05 + residual_rad / 1.2))
+    return {
+        "type": "haptic_alert",
+        "message": reason,
+        "intensity": round(float(intensity), 3),
+        "duration": 0.15 if residual_m < 0.08 else 0.25,
+        "residual_m": round(float(residual_m), 4),
+        "residual_rad": round(float(residual_rad), 4),
     }
 
 if __name__ == '__main__':
@@ -291,6 +305,8 @@ if __name__ == '__main__':
             print("Recording is DISABLED (run with --record to enable).", flush=True)
         print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
+            last_haptic_alert_time = 0.0
+            haptic_alert_cooldown = 0.4
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)
             if camera_config['head_camera']['enable_zmq'] and xr_need_local_img:
@@ -387,6 +403,37 @@ if __name__ == '__main__':
             time_ik_end = time.time()
             logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
+
+            if args.tracking_source == "unity" and hasattr(tv_wrapper, "send_feedback"):
+                try:
+                    error_vec = np.asarray(
+                        arm_ik.translational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
+                    ).reshape(-1)
+                    rot_vec = np.asarray(
+                        arm_ik.rotational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
+                    ).reshape(-1)
+
+                    left_trans_err = np.linalg.norm(error_vec[:3])
+                    right_trans_err = np.linalg.norm(error_vec[3:6])
+                    left_rot_err = np.linalg.norm(rot_vec[:3])
+                    right_rot_err = np.linalg.norm(rot_vec[3:6])
+
+                    blocked = (
+                        max(left_trans_err, right_trans_err) > 0.05
+                        or max(left_rot_err, right_rot_err) > 0.8
+                    )
+                    now = time.time()
+                    if blocked and (now - last_haptic_alert_time) >= haptic_alert_cooldown:
+                        tv_wrapper.send_feedback(
+                            build_haptic_alert(
+                                residual_m=max(left_trans_err, right_trans_err),
+                                residual_rad=max(left_rot_err, right_rot_err),
+                                reason="hitting something or unreachable target",
+                            )
+                        )
+                        last_haptic_alert_time = now
+                except Exception as feedback_error:
+                    logger_mp.debug(f"Failed to compute or send haptic feedback: {feedback_error}")
 
             # record data
             if args.record:

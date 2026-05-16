@@ -95,6 +95,7 @@ class UnityTeleVuerBridge:
         self._host = host
         self._port = port
         self._lock = threading.Lock()
+        self._clients = set()
         self._head_pose = CONST_HEAD_POSE.copy()
         self._left_arm_pose = CONST_LEFT_ARM_POSE.copy()
         self._right_arm_pose = CONST_RIGHT_ARM_POSE.copy()
@@ -124,6 +125,9 @@ class UnityTeleVuerBridge:
         return arr.reshape((4, 4), order="F")
 
     async def _handle_client(self, websocket):
+        with self._lock:
+            self._clients.add(websocket)
+
         async for raw in websocket:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
@@ -154,6 +158,9 @@ class UnityTeleVuerBridge:
                     self._head_pose = head_pose
                 self._left_arm_pose = left_pose
                 self._right_arm_pose = right_pose
+
+        with self._lock:
+            self._clients.discard(websocket)
 
     def get_tele_data(self):
         with self._lock:
@@ -198,6 +205,26 @@ class UnityTeleVuerBridge:
 
     def render_to_xr(self, _img):
         return None
+
+    async def _broadcast_feedback(self, payload: str):
+        with self._lock:
+            clients = list(self._clients)
+
+        if not clients:
+            return
+
+        await asyncio.gather(*(client.send(payload) for client in clients), return_exceptions=True)
+
+    def send_feedback(self, payload):
+        if isinstance(payload, dict):
+            payload = json.dumps(payload)
+        elif not isinstance(payload, str):
+            payload = str(payload)
+
+        if self._loop.is_closed():
+            return
+
+        asyncio.run_coroutine_threadsafe(self._broadcast_feedback(payload), self._loop)
 
     def close(self):
         self._stop_flag.set()

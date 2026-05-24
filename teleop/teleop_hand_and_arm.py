@@ -97,6 +97,8 @@ if __name__ == '__main__':
     parser.add_argument('--tracking-source', type=str, choices=['televuer', 'unity'], default='televuer', help='Tracking backend source for teleop data')
     parser.add_argument('--unity-host', type=str, default='0.0.0.0', help='Host for Unity websocket bridge server')
     parser.add_argument('--unity-port', type=int, default=8765, help='Port for Unity websocket bridge server')
+    parser.add_argument('--haptic-mode', type=str, choices=['legacy', 'filtered'], default='filtered',
+                        help='Haptic trigger mode: legacy (more false positives) or filtered (fewer false positives)')
     # mode flags
     parser.add_argument('--motion', action = 'store_true', help = 'Enable motion control mode')
     parser.add_argument('--headless', action='store_true', help='Enable headless mode (no display)')
@@ -305,8 +307,13 @@ if __name__ == '__main__':
             print("Recording is DISABLED (run with --record to enable).", flush=True)
         print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
-            last_haptic_alert_time = 0.0
-            haptic_alert_cooldown = 0.4
+        haptic_error_history = []          # histórico dos últimos N erros translacionais
+        HAPTIC_HISTORY_LEN   = 8         # frames para considerar persistência
+        HAPTIC_TRANS_THRESH  = 0.20       # 5 cm
+        HAPTIC_ROT_THRESH    = 1.2        # ~46°
+        HAPTIC_STALL_THRESH  = 0.005      # braço "parado" se dq < isso
+        HAPTIC_COOLDOWN      = 2.0
+        last_haptic_time     = 0.0
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)
             if camera_config['head_camera']['enable_zmq'] and xr_need_local_img:
@@ -404,8 +411,12 @@ if __name__ == '__main__':
             logger_mp.debug(f"ik:\t{round(time_ik_end - time_ik_start, 6)}")
             arm_ctrl.ctrl_dual_arm(sol_q, sol_tauff)
 
-            if args.tracking_source == "unity" and hasattr(tv_wrapper, "send_feedback"):
+            send_feedback = getattr(tv_wrapper, "send_feedback", None)
+            if callable(send_feedback):
                 try:
+                    now = time.time()
+
+                    # 1. Calcular erros atuais
                     error_vec = np.asarray(
                         arm_ik.translational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
                     ).reshape(-1)
@@ -413,27 +424,48 @@ if __name__ == '__main__':
                         arm_ik.rotational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
                     ).reshape(-1)
 
-                    left_trans_err = np.linalg.norm(error_vec[:3])
+                    left_trans_err  = np.linalg.norm(error_vec[:3])
                     right_trans_err = np.linalg.norm(error_vec[3:6])
-                    left_rot_err = np.linalg.norm(rot_vec[:3])
-                    right_rot_err = np.linalg.norm(rot_vec[3:6])
+                    left_rot_err    = np.linalg.norm(rot_vec[:3])
+                    right_rot_err   = np.linalg.norm(rot_vec[3:6])
+                    max_trans_err   = max(left_trans_err, right_trans_err)
+                    max_rot_err     = max(left_rot_err, right_rot_err)
 
-                    blocked = (
-                        max(left_trans_err, right_trans_err) > 0.05
-                        or max(left_rot_err, right_rot_err) > 0.8
+                    # 2. Histórico de erro — detecta persistência (não é spike momentâneo)
+                    haptic_error_history.append(max_trans_err)
+                    if len(haptic_error_history) > HAPTIC_HISTORY_LEN:
+                        haptic_error_history.pop(0)
+                    error_is_persistent = (
+                        len(haptic_error_history) == HAPTIC_HISTORY_LEN
+                        and all(e > HAPTIC_TRANS_THRESH for e in haptic_error_history)
                     )
-                    now = time.time()
-                    if blocked and (now - last_haptic_alert_time) >= haptic_alert_cooldown:
-                        tv_wrapper.send_feedback(
-                            build_haptic_alert(
-                                residual_m=max(left_trans_err, right_trans_err),
-                                residual_rad=max(left_rot_err, right_rot_err),
-                                reason="hitting something or unreachable target",
-                            )
-                        )
-                        last_haptic_alert_time = now
+
+                    # 3. Braço travado: target mudou mas braço quase não se moveu
+                    arm_stalled = (
+                        np.linalg.norm(sol_q - current_lr_arm_q) > 0.03   # target longe
+                        and np.linalg.norm(current_lr_arm_dq) < HAPTIC_STALL_THRESH  # mas braço parado
+                    )
+
+                    # 4. Disparo: erro persistente + braço travado + cooldown
+                    should_alert = (
+                        error_is_persistent
+                        and (max_rot_err > HAPTIC_ROT_THRESH or max_trans_err > HAPTIC_TRANS_THRESH)
+                        and (now - last_haptic_time) >= HAPTIC_COOLDOWN
+                    )
+
+                    if should_alert:
+                        send_feedback(build_haptic_alert(
+                            residual_m=max_trans_err,
+                            residual_rad=max_rot_err,
+                            reason="collision or unreachable target",
+                        ))
+                        last_haptic_time = now
+                        haptic_error_history.clear()   # evita re-trigger imediato
+
                 except Exception as feedback_error:
-                    logger_mp.debug(f"Failed to compute or send haptic feedback: {feedback_error}")
+                    logger_mp.debug(f"Haptic feedback error: {feedback_error}")
+            elif args.tracking_source == "unity":
+                logger_mp.debug("Unity tracking source active, but tv_wrapper does not expose send_feedback")
 
             # record data
             if args.record:

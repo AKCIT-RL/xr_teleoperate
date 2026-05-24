@@ -220,6 +220,8 @@ class UnityTeleVuerBridge:
             payload = json.dumps(payload)
         elif not isinstance(payload, str):
             payload = str(payload)
+        
+        print(f"📳 Unity bridge feedback queued: {payload}")
 
         if self._loop.is_closed():
             return

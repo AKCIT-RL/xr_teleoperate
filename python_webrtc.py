@@ -31,10 +31,13 @@ unity_pending_messages = []
 def send_to_unity(payload: str):
     global unity_datachannel, unity_pending_messages
 
-    if unity_datachannel is not None and getattr(unity_datachannel, "readyState", None) == "open":
+    state = getattr(unity_datachannel, "readyState", None) if unity_datachannel is not None else None
+    if unity_datachannel is not None and str(state).lower() == "open":
+        print(f"📤 Python → Unity payload: {payload}")
         unity_datachannel.send(payload)
         return
 
+    print(f"📦 Python → Unity queued payload (channel state={state}): {payload}")
     unity_pending_messages.append(payload)
     if len(unity_pending_messages) > 64:
         unity_pending_messages.pop(0)
@@ -43,12 +46,14 @@ def send_to_unity(payload: str):
 def flush_unity_pending_messages():
     global unity_datachannel, unity_pending_messages
 
-    if unity_datachannel is None or getattr(unity_datachannel, "readyState", None) != "open":
+    state = getattr(unity_datachannel, "readyState", None) if unity_datachannel is not None else None
+    if unity_datachannel is None or str(state).lower() != "open":
         return
 
     pending = unity_pending_messages
     unity_pending_messages = []
     for payload in pending:
+        print(f"📤 Python → Unity flushed payload: {payload}")
         unity_datachannel.send(payload)
 
 
@@ -357,12 +362,12 @@ async def handle_client(websocket):
     @pc.on("datachannel")
     def on_datachannel(channel):
         print(f"💬 DataChannel criado: {channel.label}")
+        global unity_datachannel
+        unity_datachannel = channel
 
         @channel.on("open")
         def on_open():
-            print("🔥 PYTHON: DataChannel OPEN")
-            global unity_datachannel
-            unity_datachannel = channel
+            print(f"🔥 PYTHON: DataChannel OPEN (state={getattr(channel, 'readyState', None)})")
             flush_unity_pending_messages()
             channel.send("Hello from Python!")
             channel.send("Oi do Python!")

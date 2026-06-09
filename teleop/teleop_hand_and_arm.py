@@ -308,11 +308,19 @@ if __name__ == '__main__':
         print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
         haptic_error_history = []          # histórico dos últimos N erros translacionais
+<<<<<<< HEAD
         HAPTIC_HISTORY_LEN   = 8         # frames para considerar persistência
         HAPTIC_TRANS_THRESH  = 0.20       # 5 cm
         HAPTIC_ROT_THRESH    = 1.2        # ~46°
         HAPTIC_STALL_THRESH  = 0.005      # braço "parado" se dq < isso
         HAPTIC_COOLDOWN      = 2.0
+=======
+        HAPTIC_HISTORY_LEN   = 5          # frames para considerar persistência
+        HAPTIC_TRANS_THRESH  = 0.05       # 5 cm
+        HAPTIC_ROT_THRESH    = 0.8        # ~46°
+        HAPTIC_STALL_THRESH  = 0.005      # braço "parado" se dq < isso
+        HAPTIC_COOLDOWN      = 0.5
+>>>>>>> 329da0f5 (menu and feedback)
         last_haptic_time     = 0.0
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)
@@ -414,6 +422,16 @@ if __name__ == '__main__':
             send_feedback = getattr(tv_wrapper, "send_feedback", None)
             if callable(send_feedback):
                 try:
+<<<<<<< HEAD
+=======
+                    joint_packet = {
+                        "type":  "joint_angles",
+                        "left":  sol_q[:7].tolist(),   # left arm  — 7 joints
+                        "right": sol_q[7:14].tolist(),  # right arm — 7 joints
+                    }
+                    send_feedback(json.dumps(joint_packet))
+                    
+>>>>>>> 329da0f5 (menu and feedback)
                     now = time.time()
 
                     # 1. Calcular erros atuais
@@ -449,6 +467,10 @@ if __name__ == '__main__':
                     # 4. Disparo: erro persistente + braço travado + cooldown
                     should_alert = (
                         error_is_persistent
+<<<<<<< HEAD
+=======
+                        and arm_stalled
+>>>>>>> 329da0f5 (menu and feedback)
                         and (max_rot_err > HAPTIC_ROT_THRESH or max_trans_err > HAPTIC_TRANS_THRESH)
                         and (now - last_haptic_time) >= HAPTIC_COOLDOWN
                     )

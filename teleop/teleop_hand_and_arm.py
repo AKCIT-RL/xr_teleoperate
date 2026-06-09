@@ -74,12 +74,12 @@ def get_state() -> dict:
 
 
 def build_haptic_alert(residual_m: float, residual_rad: float, reason: str) -> dict:
-    intensity = min(1.0, max(0.25, residual_m / 0.05 + residual_rad / 1.2))
+    intensity = min(1.0, max(0.25, residual_m / 0.02 + residual_rad / 0.4))
     return {
         "type": "haptic_alert",
         "message": reason,
         "intensity": round(float(intensity), 3),
-        "duration": 0.15 if residual_m < 0.08 else 0.25,
+        "duration": 0.1 if residual_m < 0.04 else 0.2,
         "residual_m": round(float(residual_m), 4),
         "residual_rad": round(float(residual_rad), 4),
     }
@@ -309,11 +309,12 @@ if __name__ == '__main__':
         READY = True                  # now ready to (1) enter START state
         haptic_error_history = []          # histórico dos últimos N erros translacionais
 
-        HAPTIC_HISTORY_LEN   = 5          # frames para considerar persistência
-        HAPTIC_TRANS_THRESH  = 0.05       # 5 cm
-        HAPTIC_ROT_THRESH    = 0.8        # ~46°
-        HAPTIC_STALL_THRESH  = 0.005      # braço "parado" se dq < isso
-        HAPTIC_COOLDOWN      = 0.5
+        HAPTIC_HISTORY_LEN   = 3          # frames para considerar persistência
+        HAPTIC_TRANS_THRESH  = 0.1       # 5 cm
+        HAPTIC_ROT_THRESH    = 0.6       # ~46°
+        HAPTIC_STALL_THRESH  = 0.01      # braço "parado" se dq < isso
+        HAPTIC_COOLDOWN      = 0.3
+        prev_trans_err       = 0.0 
 
         last_haptic_time     = 0.0
         while not START and not STOP: # wait for start or stop signal.
@@ -419,8 +420,8 @@ if __name__ == '__main__':
                 try:
                     send_feedback(json.dumps({
                         "type":  "joint_angles",
-                        "left":  sol_q[:7].tolist(),
-                        "right": sol_q[7:14].tolist(),
+                        "left":  current_lr_arm_q[:7].tolist(),
+                        "right": current_lr_arm_q[7:14].tolist(),
                     }))
                 except Exception as joint_err:
                     logger_mp.debug(f"joint_angles send error: {joint_err}")
@@ -428,7 +429,6 @@ if __name__ == '__main__':
                 try:
                     now = time.time()
 
-                    # 1. Calcular erros atuais
                     error_vec = np.asarray(
                         arm_ik.translational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
                     ).reshape(-1)
@@ -436,32 +436,25 @@ if __name__ == '__main__':
                         arm_ik.rotational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
                     ).reshape(-1)
 
-                    left_trans_err  = np.linalg.norm(error_vec[:3])
-                    right_trans_err = np.linalg.norm(error_vec[3:6])
-                    left_rot_err    = np.linalg.norm(rot_vec[:3])
-                    right_rot_err   = np.linalg.norm(rot_vec[3:6])
-                    max_trans_err   = max(left_trans_err, right_trans_err)
-                    max_rot_err     = max(left_rot_err, right_rot_err)
+                    max_trans_err = max(np.linalg.norm(error_vec[:3]), np.linalg.norm(error_vec[3:6]))
+                    max_rot_err   = max(np.linalg.norm(rot_vec[:3]),   np.linalg.norm(rot_vec[3:6]))
 
-                    # 2. Histórico de erro — detecta persistência (não é spike momentâneo)
                     haptic_error_history.append(max_trans_err)
                     if len(haptic_error_history) > HAPTIC_HISTORY_LEN:
                         haptic_error_history.pop(0)
+
                     error_is_persistent = (
                         len(haptic_error_history) == HAPTIC_HISTORY_LEN
                         and all(e > HAPTIC_TRANS_THRESH for e in haptic_error_history)
                     )
 
-                    # 3. Braço travado: target mudou mas braço quase não se moveu
-                    arm_stalled = (
-                        np.linalg.norm(sol_q - current_lr_arm_q) > 0.03   # target longe
-                        and np.linalg.norm(current_lr_arm_dq) < HAPTIC_STALL_THRESH  # mas braço parado
-                    )
+                    # ✨ erro não está diminuindo — braço bloqueado independente de onde olha
+                    arm_not_converging = (max_trans_err >= prev_trans_err * 0.95)
+                    prev_trans_err = max_trans_err
 
-                    # 4. Disparo: erro persistente + braço travado + cooldown
                     should_alert = (
                         error_is_persistent
-                        and arm_stalled
+                        and arm_not_converging
                         and (max_rot_err > HAPTIC_ROT_THRESH or max_trans_err > HAPTIC_TRANS_THRESH)
                         and (now - last_haptic_time) >= HAPTIC_COOLDOWN
                     )
@@ -473,7 +466,7 @@ if __name__ == '__main__':
                             reason="collision or unreachable target",
                         ))
                         last_haptic_time = now
-                        haptic_error_history.clear()   # evita re-trigger imediato
+                        haptic_error_history.clear()
 
                 except Exception as feedback_error:
                     logger_mp.debug(f"Haptic feedback error: {feedback_error}")

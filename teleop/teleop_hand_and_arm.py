@@ -334,12 +334,12 @@ if __name__ == '__main__':
                     head_img, head_img_fps = img_client.get_head_frame()
                 if xr_need_local_img:
                     tv_wrapper.render_to_xr(head_img)
-            if camera_config['left_wrist_camera']['enable_zmq']:
-                if args.record:
-                    left_wrist_img, _ = img_client.get_left_wrist_frame()
-            if camera_config['right_wrist_camera']['enable_zmq']:
-                if args.record:
-                    right_wrist_img, _ = img_client.get_right_wrist_frame()
+            # if camera_config['left_wrist_camera']['enable_zmq']:
+            #     if args.record:
+            #         left_wrist_img, _ = img_client.get_left_wrist_frame()
+            # if camera_config['right_wrist_camera']['enable_zmq']:
+            #     if args.record:
+            #         right_wrist_img, _ = img_client.get_right_wrist_frame()
 
             # record mode
             if args.record and RECORD_TOGGLE:
@@ -676,3 +676,8 @@ if __name__ == '__main__':
 # run commands
 # locomanipulation task
 # python teleop_hand_and_arm.py --input-mode=controller --arm=G1_29 --ee=dex3 --img-server-ip="192.168.77.43" --motion --sim
+
+# python teleop/teleop_hand_and_arm.py --tracking-source unity --unity-host 127.0.0.1 --unity-port 9876 --haptic-mode filtered
+
+
+# python python_webrtc.py --host 0.0.0.0 --port 8765 --send-video --stereo-video --img-server-ip 10.46.145.78 --forward-url ws://127.0.0.1:9876 --ice-server stun:stun.l.google.com:19302

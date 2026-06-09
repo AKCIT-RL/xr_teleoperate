@@ -98,23 +98,22 @@ class G1_29_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        # Only wait for DDS if using televuer tracking source
-        if tracking_source == "televuer":
+        # Only wait for DDS if not in simulation mode
+        if not self.simulation_mode:
             while not self.lowstate_buffer.GetData():
                 time.sleep(0.1)
                 logger_mp.warning("[G1_29_ArmController] Waiting to subscribe dds...")
             logger_mp.info("[G1_29_ArmController] Subscribe dds ok.")
         else:
-            logger_mp.info("[G1_29_ArmController] Using Unity tracking source, DDS subscriber running in background...")
+            logger_mp.info("[G1_29_ArmController] Simulation mode, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        if self.tracking_source == "televuer":
+        if not self.simulation_mode:
             self.msg.mode_machine = self.get_mode_machine()
         else:
-            # In Unity mode DDS state may not be available immediately.
             self.msg.mode_machine = 0
 
         self.all_motor_q = self.get_current_motor_q()
@@ -172,6 +171,9 @@ class G1_29_ArmController:
         if self.motion_mode:
             self.msg.motor_cmd[G1_29_JointIndex.kNotUsedJoint0].q = 1.0;
 
+        # loop_count = 0
+        # topic_name = kTopicLowCommand_Debug if (not self.motion_mode or self.simulation_mode) else kTopicLowCommand_Motion
+
         while True:
             start_time = time.time()
 
@@ -191,6 +193,21 @@ class G1_29_ArmController:
 
             self.msg.crc = self.crc.Crc(self.msg)
             self.lowcmd_publisher.Write(self.msg)
+
+            # if loop_count % 250 == 0:
+            #     first_arm_joint = list(G1_29_JointArmIndex)[0]
+            #     motor = self.msg.motor_cmd[first_arm_joint]
+            #     logger_mp.info(
+            #         f"[DDS Debug] Loop: {loop_count} | Topic: {topic_name} | Mode Machine: {self.msg.mode_machine} | Mode PR: {self.msg.mode_pr} | CRC: {self.msg.crc}\n"
+            #         f"  First Arm Joint ({first_arm_joint.name}, ID: {first_arm_joint.value}):\n"
+            #         f"    q: {motor.q:.4f} (target: {cliped_arm_q_target[0]:.4f})\n"
+            #         f"    dq: {motor.dq:.4f}\n"
+            #         f"    kp: {motor.kp:.4f}\n"
+            #         f"    kd: {motor.kd:.4f}\n"
+            #         f"    tau: {motor.tau:.4f}\n"
+            #         f"    mode: {motor.mode}"
+            #     )
+            # loop_count += 1
 
             if self._speed_gradual_max is True:
                 t_elapsed = start_time - self._gradual_start_time
@@ -401,20 +418,23 @@ class G1_23_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        # Only wait for DDS if using televuer tracking source
-        if tracking_source == "televuer":
+        # Only wait for DDS if not in simulation mode
+        if not self.simulation_mode:
             while not self.lowstate_buffer.GetData():
                 time.sleep(0.1)
                 logger_mp.warning("[G1_23_ArmController] Waiting to subscribe dds...")
             logger_mp.info("[G1_23_ArmController] Subscribe dds ok.")
         else:
-            logger_mp.info("[G1_23_ArmController] Using Unity tracking source, DDS subscriber running in background...")
+            logger_mp.info("[G1_23_ArmController] Simulation mode, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        self.msg.mode_machine = self.get_mode_machine()
+        if not self.simulation_mode:
+            self.msg.mode_machine = self.get_mode_machine()
+        else:
+            self.msg.mode_machine = 0
 
         self.all_motor_q = self.get_current_motor_q()
         logger_mp.info(f"Current all body motor state q:\n{self.all_motor_q} \n")
@@ -680,20 +700,23 @@ class H1_2_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        # Only wait for DDS if using televuer tracking source
-        if tracking_source == "televuer":
+        # Only wait for DDS if not in simulation mode
+        if not self.simulation_mode:
             while not self.lowstate_buffer.GetData():
                 time.sleep(0.1)
                 logger_mp.warning("[H1_2_ArmController] Waiting to subscribe dds...")
             logger_mp.info("[H1_2_ArmController] Subscribe dds ok.")
         else:
-            logger_mp.info("[H1_2_ArmController] Using Unity tracking source, DDS subscriber running in background...")
+            logger_mp.info("[H1_2_ArmController] Simulation mode, DDS subscriber running in background...")
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
         self.msg = unitree_hg_msg_dds__LowCmd_()
         self.msg.mode_pr = 0
-        self.msg.mode_machine = self.get_mode_machine()
+        if not self.simulation_mode:
+            self.msg.mode_machine = self.get_mode_machine()
+        else:
+            self.msg.mode_machine = 0
 
         self.all_motor_q = self.get_current_motor_q()
         logger_mp.info(f"Current all body motor state q:\n{self.all_motor_q} \n")
@@ -959,14 +982,14 @@ class H1_ArmController:
         self.subscribe_thread.daemon = True
         self.subscribe_thread.start()
 
-        # Only wait for DDS if using televuer tracking source
-        if tracking_source == "televuer":
+        # Only wait for DDS if not in simulation mode
+        if not self.simulation_mode:
             while not self.lowstate_buffer.GetData():
                 time.sleep(0.1)
                 logger_mp.warning("[H1_ArmController] Waiting to subscribe dds...")
             logger_mp.info("[H1_ArmController] Subscribe dds ok.")
         else:
-            logger_mp.info("[H1_ArmController] Using Unity tracking source, DDS subscriber running in background...")
+            logger_mp.info("[H1_ArmController] Simulation mode, DDS subscriber running in background...")
 
         # initialize h1's lowcmd msg
         self.crc = CRC()

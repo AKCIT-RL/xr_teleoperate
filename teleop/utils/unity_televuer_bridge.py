@@ -8,17 +8,17 @@ import websockets
 
 
 T_TO_UNITREE_HUMANOID_LEFT_ARM = np.array([
-    [1, 0, 0, 0],
+    [1, 0,  0, 0],
     [0, 0, -1, 0],
-    [0, 1, 0, 0],
-    [0, 0, 0, 1],
+    [0, 1,  0, 0],
+    [0, 0,  0, 1],
 ])
 
 T_TO_UNITREE_HUMANOID_RIGHT_ARM = np.array([
-    [1, 0, 0, 0],
-    [0, 0, 1, 0],
+    [1,  0, 0, 0],
+    [0,  0, 1, 0],
     [0, -1, 0, 0],
-    [0, 0, 0, 1],
+    [0,  0, 0, 1],
 ])
 
 T_ROBOT_OPENXR = np.array([
@@ -173,30 +173,23 @@ class UnityTeleVuerBridge:
         right_ipxr_bxr_world_arm, right_arm_ok = safe_mat_update(CONST_RIGHT_ARM_POSE, right_raw)
 
         brobot_world_head = T_ROBOT_OPENXR @ bxr_world_head @ T_OPENXR_ROBOT
-        left_ipxr_brobot_world_arm = T_ROBOT_OPENXR @ left_ipxr_bxr_world_arm @ T_OPENXR_ROBOT
-        right_ipxr_brobot_world_arm = T_ROBOT_OPENXR @ right_ipxr_bxr_world_arm @ T_OPENXR_ROBOT
 
-        left_ipunitree_brobot_world_arm = left_ipxr_brobot_world_arm @ (
-            T_TO_UNITREE_HUMANOID_LEFT_ARM if left_arm_ok else np.eye(4)
-        )
-        right_ipunitree_brobot_world_arm = right_ipxr_brobot_world_arm @ (
-            T_TO_UNITREE_HUMANOID_RIGHT_ARM if right_arm_ok else np.eye(4)
-        )
+        # ✨ Sem T_TO_UNITREE — controle Unity já entrega na convenção correta
+        left_ipunitree_brobot_world_arm  = T_ROBOT_OPENXR @ left_ipxr_bxr_world_arm  @ T_OPENXR_ROBOT
+        right_ipunitree_brobot_world_arm = T_ROBOT_OPENXR @ right_ipxr_bxr_world_arm @ T_OPENXR_ROBOT
 
-        left_ipunitree_brobot_head_arm = left_ipunitree_brobot_world_arm.copy()
+        left_ipunitree_brobot_head_arm  = left_ipunitree_brobot_world_arm.copy()
         right_ipunitree_brobot_head_arm = right_ipunitree_brobot_world_arm.copy()
-        left_ipunitree_brobot_head_arm[0:3, 3] = left_ipunitree_brobot_head_arm[0:3, 3] - brobot_world_head[0:3, 3]
-        right_ipunitree_brobot_head_arm[0:3, 3] = right_ipunitree_brobot_head_arm[0:3, 3] - brobot_world_head[0:3, 3]
+        left_ipunitree_brobot_head_arm[0:3, 3]  -= brobot_world_head[0:3, 3]
+        right_ipunitree_brobot_head_arm[0:3, 3] -= brobot_world_head[0:3, 3]
 
-        left_ipunitree_brobot_wrist_arm = left_ipunitree_brobot_head_arm.copy()
+        left_ipunitree_brobot_wrist_arm  = left_ipunitree_brobot_head_arm.copy()
         right_ipunitree_brobot_wrist_arm = right_ipunitree_brobot_head_arm.copy()
-        left_ipunitree_brobot_wrist_arm[0, 3] += 0.15
+        left_ipunitree_brobot_wrist_arm[0, 3]  += 0.15
         right_ipunitree_brobot_wrist_arm[0, 3] += 0.15
-        left_ipunitree_brobot_wrist_arm[2, 3] += 0.45
+        left_ipunitree_brobot_wrist_arm[2, 3]  += 0.45
         right_ipunitree_brobot_wrist_arm[2, 3] += 0.45
 
-        # Unity payload currently includes wrist/head pose only. Keep hand/controller
-        # fields with neutral defaults to preserve existing teleop interfaces.
         return TeleDataCompat(
             head_pose=brobot_world_head,
             left_wrist_pose=left_ipunitree_brobot_wrist_arm,

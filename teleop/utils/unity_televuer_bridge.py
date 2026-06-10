@@ -169,14 +169,18 @@ class UnityTeleVuerBridge:
             right_raw = self._right_arm_pose.copy()
 
         bxr_world_head, _ = safe_mat_update(CONST_HEAD_POSE, head_raw)
-        left_ipxr_bxr_world_arm, left_arm_ok = safe_mat_update(CONST_LEFT_ARM_POSE, left_raw)
+        left_ipxr_bxr_world_arm, left_arm_ok  = safe_mat_update(CONST_LEFT_ARM_POSE, left_raw)
         right_ipxr_bxr_world_arm, right_arm_ok = safe_mat_update(CONST_RIGHT_ARM_POSE, right_raw)
 
         brobot_world_head = T_ROBOT_OPENXR @ bxr_world_head @ T_OPENXR_ROBOT
 
-        # ✨ Sem T_TO_UNITREE — controle Unity já entrega na convenção correta
-        left_ipunitree_brobot_world_arm  = T_ROBOT_OPENXR @ left_ipxr_bxr_world_arm  @ T_OPENXR_ROBOT
-        right_ipunitree_brobot_world_arm = T_ROBOT_OPENXR @ right_ipxr_bxr_world_arm @ T_OPENXR_ROBOT
+        # ✅ T_TO_UNITREE necessário — Unity envia grip pose bruto do OpenXR,
+        #    diferente do TeleVuer/browser que já envia na convenção Unitree.
+        left_ipxr_brobot_world_arm  = T_ROBOT_OPENXR @ left_ipxr_bxr_world_arm  @ T_OPENXR_ROBOT
+        right_ipxr_brobot_world_arm = T_ROBOT_OPENXR @ right_ipxr_bxr_world_arm @ T_OPENXR_ROBOT
+
+        left_ipunitree_brobot_world_arm  = left_ipxr_brobot_world_arm  @ (T_TO_UNITREE_HUMANOID_LEFT_ARM  if left_arm_ok  else np.eye(4))
+        right_ipunitree_brobot_world_arm = right_ipxr_brobot_world_arm @ (T_TO_UNITREE_HUMANOID_RIGHT_ARM if right_arm_ok else np.eye(4))
 
         left_ipunitree_brobot_head_arm  = left_ipunitree_brobot_world_arm.copy()
         right_ipunitree_brobot_head_arm = right_ipunitree_brobot_world_arm.copy()

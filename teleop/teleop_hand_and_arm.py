@@ -159,8 +159,8 @@ if __name__ == '__main__':
                                          webrtc_url=f"https://{args.img_server_ip}:{camera_config['head_camera']['webrtc_port']}/offer",
                                          )
         else:
-            if args.input_mode == "controller":
-                raise ValueError("Unity tracking-source currently supports wrist tracking only. Use --input-mode hand.")
+            #if args.input_mode == "controller":
+                #raise ValueError("Unity tracking-source currently supports wrist tracking only. Use --input-mode hand.")
 
             if args.ee in {"dex3", "inspire_dfx", "inspire_ftp", "brainco"}:
                 raise ValueError("Unity tracking-source does not provide 25-keypoint hand skeleton yet; choose --ee dex1 or disable hand controller.")

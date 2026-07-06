@@ -73,15 +73,15 @@ def get_state() -> dict:
     }
 
 
-def build_haptic_alert(residual_m: float, residual_rad: float, reason: str) -> dict:
-    intensity = min(1.0, max(0.25, residual_m / 0.02 + residual_rad / 0.4))
+def build_haptic_alert(stall_error_rad: float, reason: str) -> dict:
+    # intensidade escala com o quão "preso" o braço está (erro de rastreio em rad)
+    intensity = min(1.0, max(0.25, stall_error_rad / 0.5))
     return {
         "type": "haptic_alert",
         "message": reason,
         "intensity": round(float(intensity), 3),
-        "duration": 0.1 if residual_m < 0.04 else 0.2,
-        "residual_m": round(float(residual_m), 4),
-        "residual_rad": round(float(residual_rad), 4),
+        "duration": 0.15,
+        "stall_error_rad": round(float(stall_error_rad), 4),
     }
 
 if __name__ == '__main__':
@@ -307,13 +307,14 @@ if __name__ == '__main__':
             print("Recording is DISABLED (run with --record to enable).", flush=True)
         print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
-        haptic_error_history = []          # histórico dos últimos N erros translacionais
-
-        HAPTIC_HISTORY_LEN   = 3          # frames para considerar persistência
-        HAPTIC_TRANS_THRESH  = 0.1       # 5 cm
-        HAPTIC_ROT_THRESH    = 0.6       # ~46°
-        HAPTIC_STALL_THRESH  = 0.01      # braço "parado" se dq < isso
-        HAPTIC_COOLDOWN      = 0.3
+        COLLISION_TRACK_THRESH = 0.15   # rad: erro de rastreio (comando vs. real) p/ considerar "preso"
+        COLLISION_STALL_DQ     = 0.05   # rad/s: abaixo disso o braço é considerado parado
+        COLLISION_JUMP_THRESH  = 0.30   # rad: salto de sol_q entre frames = reconfig (olhar p/ cima), suprime
+        COLLISION_HISTORY_LEN  = 3      # frames de persistência
+        COLLISION_COOLDOWN     = 0.4    # s entre alertas
+        collision_err_history  = []
+        prev_sol_q             = None
+        last_haptic_time       = 0.0
         prev_trans_err       = 0.0 
 
         last_haptic_time     = 0.0
@@ -429,47 +430,50 @@ if __name__ == '__main__':
                 try:
                     now = time.time()
 
-                    error_vec = np.asarray(
-                        arm_ik.translational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
-                    ).reshape(-1)
-                    rot_vec = np.asarray(
-                        arm_ik.rotational_error(sol_q, tele_data.left_wrist_pose, tele_data.right_wrist_pose)
-                    ).reshape(-1)
+                    # erro de rastreio por junta: comando (sol_q) vs. real medido (encoder)
+                    track_err_vec = np.abs(sol_q - current_lr_arm_q)
+                    max_track_err = float(np.max(track_err_vec))
 
-                    max_trans_err = max(np.linalg.norm(error_vec[:3]), np.linalg.norm(error_vec[3:6]))
-                    max_rot_err   = max(np.linalg.norm(rot_vec[:3]),   np.linalg.norm(rot_vec[3:6]))
+                    # velocidade real do braço (encoder). Braço preso => ~0.
+                    arm_speed = float(np.max(np.abs(current_lr_arm_dq)))
 
-                    haptic_error_history.append(max_trans_err)
-                    if len(haptic_error_history) > HAPTIC_HISTORY_LEN:
-                        haptic_error_history.pop(0)
+                    # salto do alvo entre frames (reconfiguração, ex. olhar p/ cima)
+                    if prev_sol_q is not None:
+                        target_jump = float(np.max(np.abs(sol_q - prev_sol_q)))
+                    else:
+                        target_jump = 0.0
+                    prev_sol_q = np.asarray(sol_q).copy()
 
-                    error_is_persistent = (
-                        len(haptic_error_history) == HAPTIC_HISTORY_LEN
-                        and all(e > HAPTIC_TRANS_THRESH for e in haptic_error_history)
+                    # histórico de "preso" (erro alto + parado)
+                    is_stuck_now = (max_track_err > COLLISION_TRACK_THRESH) and (arm_speed < COLLISION_STALL_DQ)
+                    collision_err_history.append(is_stuck_now)
+                    if len(collision_err_history) > COLLISION_HISTORY_LEN:
+                        collision_err_history.pop(0)
+
+                    stuck_persistent = (
+                        len(collision_err_history) == COLLISION_HISTORY_LEN
+                        and all(collision_err_history)
                     )
 
-                    # ✨ erro não está diminuindo — braço bloqueado independente de onde olha
-                    arm_not_converging = (max_trans_err >= prev_trans_err * 0.95)
-                    prev_trans_err = max_trans_err
+                    # suprime se o alvo saltou (não é colisão, é reconfiguração de tracking)
+                    target_is_stable = target_jump < COLLISION_JUMP_THRESH
 
                     should_alert = (
-                        error_is_persistent
-                        and arm_not_converging
-                        and (max_rot_err > HAPTIC_ROT_THRESH or max_trans_err > HAPTIC_TRANS_THRESH)
-                        and (now - last_haptic_time) >= HAPTIC_COOLDOWN
+                        stuck_persistent
+                        and target_is_stable
+                        and (now - last_haptic_time) >= COLLISION_COOLDOWN
                     )
 
                     if should_alert:
                         send_feedback(build_haptic_alert(
-                            residual_m=max_trans_err,
-                            residual_rad=max_rot_err,
-                            reason="collision or unreachable target",
+                            stall_error_rad=max_track_err,
+                            reason="collision or blocked arm",
                         ))
                         last_haptic_time = now
-                        haptic_error_history.clear()
+                        collision_err_history.clear()
 
                 except Exception as feedback_error:
-                    logger_mp.debug(f"Haptic feedback error: {feedback_error}")
+                    logger_mp.debug(f"Collision feedback error: {feedback_error}")
             elif args.tracking_source == "unity":
                 logger_mp.debug("Unity tracking source active, but tv_wrapper does not expose send_feedback")
 

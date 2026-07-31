@@ -247,13 +247,10 @@ def is_pose_payload(message: str) -> bool:
 # Filtragem de ICE
 # ------------------------------
 def is_valid_candidate(ip):
-    # Ignora link-local IPv4
+    # Ignora link-local IPv4 e IPv6 locais
     if ip.startswith("169.254."):
         return False
-    # Ignora TODO IPv6 quando estamos forçando rota IPv4 via Tailscale.
-    # (Tailscale IPv6 usa fd7a::/48, que não casava com os prefixos antigos
-    #  e vencia o ICE, mandando o vídeo por uma rota que não completa RTP.)
-    if ":" in ip:
+    if ip.startswith("fe80:") or ip.startswith("fc00:") or ip.startswith("fd00:"):
         return False
     return True
 

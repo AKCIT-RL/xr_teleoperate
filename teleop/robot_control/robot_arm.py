@@ -24,10 +24,12 @@ H1_2_Num_Motors = 35
 H1_Num_Motors = 20
  
 
+
 class MotorState:
     def __init__(self):
         self.q = None
         self.dq = None
+        self.tau_est = None   # ✨
 
 class G1_29_LowState:
     def __init__(self):
@@ -150,6 +152,7 @@ class G1_29_ArmController:
         logger_mp.info("Initialize G1_29_ArmController OK!")
 
     def _subscribe_motor_state(self):
+        _dbg_count = 0
         while True:
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -157,8 +160,24 @@ class G1_29_ArmController:
                 for id in range(G1_29_Num_Motors):
                     lowstate.motor_state[id].q  = msg.motor_state[id].q
                     lowstate.motor_state[id].dq = msg.motor_state[id].dq
+                    lowstate.motor_state[id].tau_est = msg.motor_state[id].tau_est
                 self.lowstate_buffer.SetData(lowstate)
+
+                # Debug de calibração: descomente o print quando teleoperar
+                # com o VR pra medir os torques (braço esticado livre vs. segurando caixa).
+                _dbg_count += 1
+                if _dbg_count % 50 == 0:
+                    taus_l = [round(msg.motor_state[i].tau_est, 2) for i in range(15, 22)]
+                    taus_r = [round(msg.motor_state[i].tau_est, 2) for i in range(22, 29)]
+                    # print(f">>> tauL:{taus_l}  tauR:{taus_r}", flush=True)
             time.sleep(0.002)
+    
+    def get_current_dual_arm_tau(self):
+        '''Return current estimated torque of the left and right arm motors.'''
+        lowstate = self.lowstate_buffer.GetData()
+        if lowstate is None:
+            return np.zeros(len(G1_29_JointArmIndex))
+        return np.array([lowstate.motor_state[id].tau_est for id in G1_29_JointArmIndex])
 
     def clip_arm_q_target(self, target_q, velocity_limit):
         current_q = self.get_current_dual_arm_q()

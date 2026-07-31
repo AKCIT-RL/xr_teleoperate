@@ -73,15 +73,15 @@ def get_state() -> dict:
     }
 
 
-def build_haptic_alert(stall_error_rad: float, reason: str) -> dict:
-    # intensidade escala com o quão "preso" o braço está (erro de rastreio em rad)
-    intensity = min(1.0, max(0.25, stall_error_rad / 0.5))
+def build_haptic_alert(max_tau: float, reason: str) -> dict:
+    span = max(1e-3, HAPTIC_TAU_MAX - HAPTIC_TAU_THRESH)
+    intensity = min(1.0, max(0.25, (max_tau - HAPTIC_TAU_THRESH) / span))
     return {
         "type": "haptic_alert",
         "message": reason,
         "intensity": round(float(intensity), 3),
         "duration": 0.15,
-        "stall_error_rad": round(float(stall_error_rad), 4),
+        "max_tau": round(float(max_tau), 3),
     }
 
 if __name__ == '__main__':
@@ -307,17 +307,21 @@ if __name__ == '__main__':
             print("Recording is DISABLED (run with --record to enable).", flush=True)
         print("Press [q] to stop and exit the program.", flush=True)
         READY = True                  # now ready to (1) enter START state
-        COLLISION_TRACK_THRESH = 0.15   # rad: erro de rastreio (comando vs. real) p/ considerar "preso"
-        COLLISION_STALL_DQ     = 0.05   # rad/s: abaixo disso o braço é considerado parado
-        COLLISION_JUMP_THRESH  = 0.30   # rad: salto de sol_q entre frames = reconfig (olhar p/ cima), suprime
-        COLLISION_HISTORY_LEN  = 3      # frames de persistência
-        COLLISION_COOLDOWN     = 0.4    # s entre alertas
-        collision_err_history  = []
-        prev_sol_q             = None
-        last_haptic_time       = 0.0
-        prev_trans_err       = 0.0 
-
-        last_haptic_time     = 0.0
+        # ---- detecção de esforço por torque (segurar/empurrar algo pesado) ----
+        # Baseline de sustentação medido na sim: ombro ~2.3, cotovelo ~1.9 N·m.
+        # Threshold ACIMA disso, pra só vibrar quando o braço faz força extra
+        # (segurar caixa, empurrar superfície). CALIBRAR com o VR:
+        #   - meça o torque do braço esticado livre (sem carga) -> teto do "normal"
+        #   - meça segurando uma caixa -> piso do "quero vibrar"
+        #   - ponha o threshold no meio.
+        HAPTIC_TAU_THRESH  = 10.0    # N·m acima disso = "fazendo força" [CALIBRAR]
+        HAPTIC_TAU_MAX     = 18.0   # N·m onde a vibração satura em intensidade 1.0 [CALIBRAR]
+        HAPTIC_HISTORY_LEN = 3      # frames de persistência (evita picos momentâneos)
+        HAPTIC_COOLDOWN    = 0.3    # s entre alertas
+        HAPTIC_COOLDOWN_MAX = 0.5
+        HAPTIC_COOLDOWN_MIN = 0.05 
+        haptic_tau_history = []
+        last_haptic_time   = 0.0
         while not START and not STOP: # wait for start or stop signal.
             time.sleep(0.033)
             if camera_config['head_camera']['enable_zmq'] and xr_need_local_img:
@@ -417,63 +421,38 @@ if __name__ == '__main__':
 
             send_feedback = getattr(tv_wrapper, "send_feedback", None)
             if callable(send_feedback):
-                # ✨ Joint angles — envia separado, com seu próprio try
-                try:
-                    send_feedback(json.dumps({
-                        "type":  "joint_angles",
-                        "left":  current_lr_arm_q[:7].tolist(),
-                        "right": current_lr_arm_q[7:14].tolist(),
-                    }))
-                except Exception as joint_err:
-                    logger_mp.debug(f"joint_angles send error: {joint_err}")
-                    
                 try:
                     now = time.time()
+                    arm_tau = np.abs(arm_ctrl.get_current_dual_arm_tau())
+                    max_tau = float(np.max(arm_tau))
+                    send_feedback({
+                        "type": "joint_torques",
+                        "left":  [round(float(t), 2) for t in arm_tau[0:7]],
+                        "right": [round(float(t), 2) for t in arm_tau[7:14]],
+                    })
+                    over = max_tau > HAPTIC_TAU_THRESH
+                    haptic_tau_history.append(over)
+                    if len(haptic_tau_history) > HAPTIC_HISTORY_LEN:
+                        haptic_tau_history.pop(0)
 
-                    # erro de rastreio por junta: comando (sol_q) vs. real medido (encoder)
-                    track_err_vec = np.abs(sol_q - current_lr_arm_q)
-                    max_track_err = float(np.max(track_err_vec))
-
-                    # velocidade real do braço (encoder). Braço preso => ~0.
-                    arm_speed = float(np.max(np.abs(current_lr_arm_dq)))
-
-                    # salto do alvo entre frames (reconfiguração, ex. olhar p/ cima)
-                    if prev_sol_q is not None:
-                        target_jump = float(np.max(np.abs(sol_q - prev_sol_q)))
-                    else:
-                        target_jump = 0.0
-                    prev_sol_q = np.asarray(sol_q).copy()
-
-                    # histórico de "preso" (erro alto + parado)
-                    is_stuck_now = (max_track_err > COLLISION_TRACK_THRESH) and (arm_speed < COLLISION_STALL_DQ)
-                    collision_err_history.append(is_stuck_now)
-                    if len(collision_err_history) > COLLISION_HISTORY_LEN:
-                        collision_err_history.pop(0)
-
-                    stuck_persistent = (
-                        len(collision_err_history) == COLLISION_HISTORY_LEN
-                        and all(collision_err_history)
+                    effort_persistent = (
+                        len(haptic_tau_history) == HAPTIC_HISTORY_LEN
+                        and all(haptic_tau_history)
                     )
 
-                    # suprime se o alvo saltou (não é colisão, é reconfiguração de tracking)
-                    target_is_stable = target_jump < COLLISION_JUMP_THRESH
+                    # cooldown dinâmico: interpola de MAX (torque baixo) a MIN (torque alto)
+                    span = max(1e-3, HAPTIC_TAU_MAX - HAPTIC_TAU_THRESH)
+                    frac = min(1.0, max(0.0, (max_tau - HAPTIC_TAU_THRESH) / span))
+                    dyn_cooldown = HAPTIC_COOLDOWN_MAX - frac * (HAPTIC_COOLDOWN_MAX - HAPTIC_COOLDOWN_MIN)
 
-                    should_alert = (
-                        stuck_persistent
-                        and target_is_stable
-                        and (now - last_haptic_time) >= COLLISION_COOLDOWN
-                    )
-
-                    if should_alert:
+                    if effort_persistent and (now - last_haptic_time) >= dyn_cooldown:
                         send_feedback(build_haptic_alert(
-                            stall_error_rad=max_track_err,
-                            reason="collision or blocked arm",
+                            max_tau=max_tau,
+                            reason="high joint effort (contact/load)",
                         ))
                         last_haptic_time = now
-                        collision_err_history.clear()
-
                 except Exception as feedback_error:
-                    logger_mp.debug(f"Collision feedback error: {feedback_error}")
+                    logger_mp.debug(f"Haptic feedback error: {feedback_error}")
             elif args.tracking_source == "unity":
                 logger_mp.debug("Unity tracking source active, but tv_wrapper does not expose send_feedback")
 

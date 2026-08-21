@@ -58,30 +58,47 @@ def flush_unity_pending_messages():
 
 
 class ImageClientVideoTrack(VideoStreamTrack):
-    def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None):
+    def __init__(self, img_server_ip: str, fps: float = 30.0, preserve_stereo: bool = False, max_width=None, max_height=None, mono_zmq_port: int = None):
         super().__init__()
-        from teleimager.image_client import ImageClient
+        from teleimager.image_client import ImageClient, ZMQ_SubscriberManager
 
         self._img_client = ImageClient(host=img_server_ip)
+        self._img_server_ip = img_server_ip
         self._fps = max(1.0, fps)
         self._time_base = fractions.Fraction(1, int(self._fps))
         self._pts = 0
-        self._preserve_stereo = preserve_stereo
+        self._stereo_mode = preserve_stereo
         self._max_width = max_width
         self._max_height = max_height
         self._frame_count = 0
         self._last_log_time = 0
 
+        # Optional dedicated mono (center) camera stream, published separately
+        # by the image server as its own zmq topic (see head_camera_mono in
+        # cam_config_server.yaml). When configured, Unity's stereo toggle can
+        # switch which stream this track pulls from in real time via
+        # set_stereo_mode(), instead of cropping the stereo frame in half.
+        self._mono_zmq_port = mono_zmq_port
+        self._subscriber_manager = ZMQ_SubscriberManager.get_instance() if mono_zmq_port else None
+
+    def set_stereo_mode(self, enabled: bool):
+        self._stereo_mode = bool(enabled)
+        logging.info(f"[ImageClientVideoTrack] Stereo mode set to {self._stereo_mode}")
+
     async def recv(self):
         # Use thread offload because image client access is blocking.
-        head_img, _ = await asyncio.to_thread(self._img_client.get_head_frame)
+        if self._stereo_mode or self._subscriber_manager is None:
+            head_img, _ = await asyncio.to_thread(self._img_client.get_head_frame)
+
+            # No dedicated mono stream configured: fall back to cropping the
+            # binocular frame in half (off-center, but better than nothing).
+            if not self._stereo_mode and head_img is not None and len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
+                head_img = head_img[:, : head_img.shape[1] // 2]
+        else:
+            head_img, _ = await asyncio.to_thread(self._subscriber_manager.subscribe, self._img_server_ip, self._mono_zmq_port)
 
         if head_img is None:
             head_img = np.zeros((480, 640, 3), dtype=np.uint8)
-
-        # Keep the binocular pair intact when Unity should render stereo side-by-side.
-        if not self._preserve_stereo and len(head_img.shape) == 3 and head_img.shape[1] >= 2 * head_img.shape[0]:
-            head_img = head_img[:, : head_img.shape[1] // 2]
 
         if self._max_width is not None or self._max_height is not None:
             height, width = head_img.shape[:2]
@@ -383,6 +400,18 @@ async def handle_client(websocket):
 
             if forwarder is not None and is_pose_payload(text):
                 asyncio.create_task(forwarder.enqueue(text))
+                return
+
+            try:
+                control = json.loads(text)
+            except json.JSONDecodeError:
+                control = None
+
+            if isinstance(control, dict) and control.get("type") == "stereo_vision":
+                if video_track is not None and hasattr(video_track, "set_stereo_mode"):
+                    video_track.set_stereo_mode(bool(control.get("enabled", True)))
+                else:
+                    print("⚠️ stereo_vision command received but video_track has no set_stereo_mode")
 
     @pc.on("icecandidate")
     async def on_icecandidate(candidate):
@@ -499,6 +528,7 @@ async def main():
     parser.add_argument("--stereo-video", action="store_true", help="Keep binocular frames side-by-side instead of cropping to one eye")
     parser.add_argument("--test-image", type=str, default=None, help="Optional local image path (jpg/png) to stream as repeated video frames")
     parser.add_argument("--img-server-ip", type=str, default="127.0.0.1", help="Image server IP for video source")
+    parser.add_argument("--mono-zmq-port", type=int, default=None, help="Zmq port of a dedicated mono (center) camera stream, e.g. head_camera_mono in cam_config_server.yaml. When set, Unity's stereo toggle switches between this and the binocular stream in real time.")
     parser.add_argument("--video-fps", type=float, default=30.0, help="Video FPS sent to Unity")
     parser.add_argument("--video-max-width", type=int, default=None, help="Optional maximum video width for bandwidth-constrained links")
     parser.add_argument("--video-max-height", type=int, default=None, help="Optional maximum video height for bandwidth-constrained links")
@@ -555,6 +585,7 @@ async def main():
             preserve_stereo=args.stereo_video,
             max_width=args.video_max_width,
             max_height=args.video_max_height,
+            mono_zmq_port=args.mono_zmq_port,
         )
 
     server = await websockets.serve(handle_client, args.host, args.port)
@@ -570,6 +601,8 @@ async def main():
     print(f"🎞️  Video codec preference: {args.video_codec}")
     if args.stereo_video:
         print("🥽 Stereo side-by-side mode enabled")
+    if args.mono_zmq_port:
+        print(f"🎯 Dedicated mono camera stream on zmq port {args.mono_zmq_port} — Unity toggle switches streams live")
     print("🧭 ICE servers configured:")
     for s in ice_servers:
         print(f"   - {s.urls}")

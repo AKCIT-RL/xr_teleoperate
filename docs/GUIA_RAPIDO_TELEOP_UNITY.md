@@ -35,6 +35,22 @@ Abra `http://localhost:8080` (F11 para tela cheia na TV). Não precisa de intern
 5. **Gravações:** lista os episódios, com player das imagens, gráficos e o botão
    **Replay determinístico no Isaac** (encerre a sessão antes).
 
+**Dicas**
+
+- **Teclado:** com a janela da interface em foco, **R** inicia, **S** grava/salva e **Q**
+  encerra a teleoperação (mesmas regras dos botões; Q pede confirmação).
+- **Tarefas prontas:** 3 Mesas (mão fixa, locomoção), Cilindro (Dex1, base fixa) e Mover
+  cilindro (Dex1, locomoção). Qualquer outra pode ser usada digitando o gym id em `--task`
+  no Avançado; para deixá-la fixa na lista, adicione uma entrada em `TASK_PRESETS` em
+  [gui/commands.py](../gui/commands.py) e reinicie a interface.
+- **Na TV:** abra como aplicativo, sem barra de endereço (Alt+F4 fecha; `--kiosk` no lugar de
+  `--app` abre em tela cheia):
+  ```bash
+  google-chrome --app=http://localhost:8080 --user-data-dir=$HOME/.config/teleop-gui-chrome
+  ```
+- **Encerrar a interface:** Ctrl+C no terminal do `gui/app.py` — ela encerra antes os
+  processos que estiverem rodando.
+
 Os comandos abaixo continuam valendo para rodar pelo terminal.
 
 ## Ordem de inicialização (terminal)

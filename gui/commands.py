@@ -109,6 +109,12 @@ TASK_PRESETS = {
         "ee": "dex1", "dex1": True, "motion": False, "record_name": "cilindro",
         "note": "Base fixa: sem locomoção.",
     },
+    "mover_cilindro": {
+        "label": "Mover cilindro · garra Dex1 · locomoção",
+        "task": "Isaac-Move-Cylinder-G129-Dex1-Wholebody",
+        "ee": "dex1", "dex1": True, "motion": True, "record_name": "mover_cilindro",
+        "note": "Locomanipulação: anda com os thumbsticks e pega com a garra (gatilho).",
+    },
 }
 
 DEFAULT_BASE = {

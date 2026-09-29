@@ -97,6 +97,7 @@ if __name__ == '__main__':
     parser.add_argument('--tracking-source', type=str, choices=['televuer', 'unity'], default='televuer', help='Tracking backend source for teleop data')
     parser.add_argument('--unity-host', type=str, default='0.0.0.0', help='Host for Unity websocket bridge server')
     parser.add_argument('--unity-port', type=int, default=8765, help='Port for Unity websocket bridge server')
+    parser.add_argument('--unity-wrist-pitch-offset', type=float, default=60.0, help='Pitch offset (degrees, about wrist local y) applied to Unity controller wrist poses; 60 matches TeleVuer, 0 disables')
     parser.add_argument('--haptic-mode', type=str, choices=['legacy', 'filtered'], default='filtered',
                         help='Haptic trigger mode: legacy (more false positives) or filtered (fewer false positives)')
     # mode flags
@@ -166,7 +167,8 @@ if __name__ == '__main__':
                 raise ValueError("Unity tracking-source does not provide 25-keypoint hand skeleton yet; choose --ee dex1 or disable hand controller.")
 
             logger_mp.info(f"Starting Unity tracking bridge on ws://{args.unity_host}:{args.unity_port}")
-            tv_wrapper = UnityTeleVuerBridge(host=args.unity_host, port=args.unity_port)
+            tv_wrapper = UnityTeleVuerBridge(host=args.unity_host, port=args.unity_port,
+                                             wrist_pitch_offset_deg=args.unity_wrist_pitch_offset)
         print("[startup] tracking wrapper ready", flush=True)
         
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)

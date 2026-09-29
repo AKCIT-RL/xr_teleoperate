@@ -80,9 +80,21 @@ class UnityTeleVuerBridge:
     head/left/right (4x4) + estado dos controles enviados pela Unity via websocket.
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8766):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8766, wrist_pitch_offset_deg: float = 60.0):
         self._host = host
         self._port = port
+        # Rotação fixa (pitch em torno do y local do pulso) aplicada à pose do
+        # controle vinda da Unity. Medido contra o TeleVuer: a pose da Unity chega
+        # ~60° inclinada em pitch; sem compensar, a IK acerta a posição da mão mas
+        # torce ombro/cotovelo. Rotação pura: não altera a posição do pulso.
+        pitch = np.deg2rad(wrist_pitch_offset_deg)
+        c, s = np.cos(pitch), np.sin(pitch)
+        self._wrist_offset = np.array([
+            [c,  0, s, 0],
+            [0,  1, 0, 0],
+            [-s, 0, c, 0],
+            [0,  0, 0, 1],
+        ])
         self._lock = threading.Lock()
         self._clients = set()
         self._head_pose = CONST_HEAD_POSE.copy()
@@ -182,9 +194,10 @@ class UnityTeleVuerBridge:
         # Convenção do punho: a grip pose do controller da Unity já chega ~na
         # convenção URDF Unitree (igual ao branch de controller do v1). NÃO
         # aplicar T_TO_UNITREE (Rx±90) — confirmado empiricamente: roll no
-        # controle → roll limpo no robô. Correção = identidade.
-        left_ipunitree_brobot_world_arm  = left_ipxr_brobot_world_arm.copy()
-        right_ipunitree_brobot_world_arm = right_ipxr_brobot_world_arm.copy()
+        # controle → roll limpo no robô. Resta um offset de pitch (y local),
+        # compensado por self._wrist_offset (identidade quando o offset é 0).
+        left_ipunitree_brobot_world_arm  = left_ipxr_brobot_world_arm  @ self._wrist_offset
+        right_ipunitree_brobot_world_arm = right_ipxr_brobot_world_arm @ self._wrist_offset
 
         left_ipunitree_brobot_head_arm  = left_ipunitree_brobot_world_arm.copy()
         right_ipunitree_brobot_head_arm = right_ipunitree_brobot_world_arm.copy()
@@ -243,7 +256,6 @@ class UnityTeleVuerBridge:
             payload = json.dumps(payload)
         elif not isinstance(payload, str):
             payload = str(payload)
-        print(f"📳 Unity bridge feedback queued: {payload}")
         if self._loop.is_closed():
             return
         asyncio.run_coroutine_threadsafe(self._broadcast_feedback(payload), self._loop)

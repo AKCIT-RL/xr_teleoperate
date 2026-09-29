@@ -26,6 +26,21 @@ ice_host_override = None
 rtc_config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
 unity_datachannel = None
 unity_pending_messages = []
+# Prints por mensagem (poses e feedback, dezenas por segundo) só com --log-messages;
+# no lugar deles, stats_loop() imprime um resumo a cada STATS_INTERVAL segundos.
+log_messages = False
+STATS_INTERVAL = 5.0
+msg_stats = {"poses": 0, "feedback": 0, "queued": 0}
+
+
+async def stats_loop():
+    while True:
+        await asyncio.sleep(STATS_INTERVAL)
+        poses, feedback, queued = msg_stats["poses"], msg_stats["feedback"], msg_stats["queued"]
+        msg_stats.update(poses=0, feedback=0, queued=0)
+        if poses or feedback or queued:
+            print(f"[stats] poses {poses / STATS_INTERVAL:.0f}/s · feedback {feedback / STATS_INTERVAL:.0f}/s"
+                  + (f" · {queued} na fila (canal fechado)" if queued else ""), flush=True)
 
 
 def send_to_unity(payload: str):
@@ -33,11 +48,15 @@ def send_to_unity(payload: str):
 
     state = getattr(unity_datachannel, "readyState", None) if unity_datachannel is not None else None
     if unity_datachannel is not None and str(state).lower() == "open":
-        print(f"📤 Python → Unity payload: {payload}")
+        if log_messages:
+            print(f"📤 Python → Unity payload: {payload}")
+        msg_stats["feedback"] += 1
         unity_datachannel.send(payload)
         return
 
-    print(f"📦 Python → Unity queued payload (channel state={state}): {payload}")
+    if log_messages:
+        print(f"📦 Python → Unity queued payload (channel state={state}): {payload}")
+    msg_stats["queued"] += 1
     unity_pending_messages.append(payload)
     if len(unity_pending_messages) > 64:
         unity_pending_messages.pop(0)
@@ -388,7 +407,11 @@ async def handle_client(websocket):
             else:
                 text = str(message)
 
-            print("📥 Unity → Python:", text)
+            if log_messages:
+                print("📥 Unity → Python:", text)
+
+            if is_pose_payload(text):
+                msg_stats["poses"] += 1
 
             if forwarder is not None and is_pose_payload(text):
                 asyncio.create_task(forwarder.enqueue(text))
@@ -511,6 +534,7 @@ async def main():
     global forwarder, video_track, rtc_config
     global video_debug, video_codec
     global ice_host_override
+    global log_messages
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Signaling server host")
@@ -535,8 +559,10 @@ async def main():
     parser.add_argument("--turn-username", type=str, default=None, help="TURN username")
     parser.add_argument("--turn-password", type=str, default=None, help="TURN password")
     parser.add_argument("--video-debug", action="store_true", help="Enable verbose video transmission logging")
+    parser.add_argument("--log-messages", action="store_true", help="Print every DataChannel message (poses/feedback); default prints a summary every 5 s")
     args = parser.parse_args()
 
+    log_messages = args.log_messages
     video_debug = args.video_debug
     video_codec = args.video_codec
     ice_host_override = args.ice_host
@@ -560,6 +586,8 @@ async def main():
     if args.forward_url:
         forwarder = BridgeForwarder(args.forward_url)
         forwarder.start()
+
+    stats_task = asyncio.create_task(stats_loop())
 
     if args.test_image:
         video_track = StaticImageVideoTrack(

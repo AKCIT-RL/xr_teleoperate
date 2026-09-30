@@ -514,8 +514,11 @@ if __name__ == '__main__':
                     depths = {}
                     if camera_config['head_camera']['binocular']:
                         if head_img is not None:
-                            colors[f"color_{0}"] = head_img[:, :camera_config['head_camera']['image_shape'][1]//2]
-                            colors[f"color_{1}"] = head_img[:, camera_config['head_camera']['image_shape'][1]//2:]
+                            # divide pela largura real do quadro (não a do cam_config): a resolução
+                            # da câmera pode variar por tarefa sem mudar a configuração do servidor
+                            half_w = head_img.shape[1] // 2
+                            colors[f"color_{0}"] = head_img[:, :half_w]
+                            colors[f"color_{1}"] = head_img[:, half_w:]
                         else:
                             logger_mp.warning("Head image is None!")
                         if camera_config['left_wrist_camera']['enable_zmq']:

@@ -52,6 +52,8 @@ BRIDGE_PARAMS = [
     Param("stereo_video", "--stereo-video", "bool", "Vídeo estéreo"),
     Param("video_fps", "--video-fps", "float", "FPS do vídeo"),
     Param("video_codec", "--video-codec", "select", "Codec", ["auto", "vp8", "h264"]),
+    Param("video_bitrate", "--video-bitrate", "float", "Taxa de bits máx. (Mbps)",
+          help="teto do encoder; vazio ou 0 = padrão do aiortc (VP8 1,5 / H264 3 Mbps)"),
     Param("video_max_width", "--video-max-width", "int", "Largura máx. do vídeo"),
     Param("video_max_height", "--video-max-height", "int", "Altura máx. do vídeo"),
     Param("ice_server", "--ice-server", "str", "Servidor ICE (STUN)"),
@@ -100,27 +102,32 @@ TASK_PRESETS = {
     "tres_mesas": {
         "label": "3 Mesas · mão fixa · locomoção",
         "task": "Isaac-Custom-3Tables-G129-Dex1-Wholebody",
-        "ee": "", "dex1": False, "motion": True, "record_name": "tres_mesas",
+        "ee": "", "dex1": False, "motion": True, "record_name": "tres_mesas", "cam_res": True,
         "note": "Robô de mão fixa: sem --enable_dex1_dds e sem --ee.",
     },
     "cilindro": {
         "label": "Cilindro · garra Dex1 · base fixa",
         "task": "Isaac-PickPlace-Cylinder-G129-Dex1-Joint",
-        "ee": "dex1", "dex1": True, "motion": False, "record_name": "cilindro",
+        "ee": "dex1", "dex1": True, "motion": False, "record_name": "cilindro", "cam_res": False,
         "note": "Base fixa: sem locomoção.",
     },
     "mover_cilindro": {
         "label": "Mover cilindro · garra Dex1 · locomoção",
         "task": "Isaac-Move-Cylinder-G129-Dex1-Wholebody",
-        "ee": "dex1", "dex1": True, "motion": True, "record_name": "mover_cilindro",
+        "ee": "dex1", "dex1": True, "motion": True, "record_name": "mover_cilindro", "cam_res": True,
         "note": "Locomanipulação: anda com os thumbsticks e pega com a garra (gatilho).",
     },
 }
+
+# Resolução por olho da câmera da cabeça na simulação (tarefas com "cam_res": True).
+# Vai para o sim pela variável de ambiente SIM_HEAD_CAM_RES (lida no cfg da tarefa).
+CAM_RESOLUTIONS = ["640x480", "960x720"]
 
 DEFAULT_BASE = {
     "mode": "sim",               # sim | real
     "preset": "tres_mesas",
     "headless": True,
+    "cam_res": "640x480",        # resolução por olho da câmera da cabeça (sim)
     "input_mode": "controller",
     "motion": True,
     "quest_ip": "",              # IP do PC visto pelo Quest (--ice-host)
@@ -147,13 +154,15 @@ def derive(base: dict) -> dict:
         "enable_cameras": True, "headless": bool(b["headless"]),
         "enable_dex1_dds": preset["dex1"], "enable_dex3_dds": False, "enable_inspire_dds": False,
         "step_hz": None, "physics_dt": None, "extra": "",
+        # não é argumento do sim_main: vira a variável de ambiente SIM_HEAD_CAM_RES
+        "head_cam_res": b["cam_res"] if b["cam_res"] in CAM_RESOLUTIONS else CAM_RESOLUTIONS[0],
     }
     bridge = {
         "host": "0.0.0.0", "port": PORT_SIGNALING, "img_server_ip": img_ip,
         "ice_host": b["quest_ip"] or None,
         "forward_url": f"ws://127.0.0.1:{PORT_BRIDGE}",
         "send_video": True, "stereo_video": bool(b["stereo"]), "video_fps": 30,
-        "video_codec": "auto", "video_max_width": None, "video_max_height": None,
+        "video_codec": "auto", "video_bitrate": 8, "video_max_width": None, "video_max_height": None,
         "ice_server": None, "turn_url": None, "turn_username": None, "turn_password": None,
         "video_debug": False, "log_messages": False, "extra": "",
     }
@@ -220,13 +229,16 @@ def launch_spec(proc: str, values: dict, extra_args: Optional[list] = None) -> d
     env_name = SIM_ENV if proc == "sim" else TELEOP_ENV
     cwd = {"sim": SIM_REPO, "bridge": REPO, "teleop": TELEOP_DIR}[proc]
     inner = "python -u " + " ".join(shlex.quote(a) for a in args)
+    env_prefix = ""
+    if proc == "sim" and values.get("head_cam_res"):
+        env_prefix = f"SIM_HEAD_CAM_RES={shlex.quote(str(values['head_cam_res']))} "
     conda_sh = CONDA_ROOT / "etc" / "profile.d" / "conda.sh"
-    shell = f"source {shlex.quote(str(conda_sh))} && conda activate {shlex.quote(env_name)} && exec {inner}"
+    shell = f"source {shlex.quote(str(conda_sh))} && conda activate {shlex.quote(env_name)} && {env_prefix}exec {inner}"
     return {
         "argv": ["bash", "-c", shell],
         "cwd": str(cwd),
-        "display": f"(cd {cwd} && conda activate {env_name} && python {' '.join(shlex.quote(a) for a in args)})",
-        "short": "python " + " ".join(shlex.quote(a) for a in args),
+        "display": f"(cd {cwd} && conda activate {env_name} && {env_prefix}python {' '.join(shlex.quote(a) for a in args)})",
+        "short": env_prefix + "python " + " ".join(shlex.quote(a) for a in args),
     }
 
 

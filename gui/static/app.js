@@ -205,6 +205,11 @@ function renderConfigFields() {
     g.append(
       h("fieldset", {}, h("legend", {}, "Tarefa"), presetSel, h("span", { class: "small mono" }, preset.task || ""), h("span", { class: "small" }, preset.note || "")),
       h("fieldset", {}, h("legend", {}, "Simulação"), checkbox("Headless (sem janela do Isaac)", "headless"),
+        preset.cam_res
+          ? field("Resolução da câmera (por olho)",
+              selectEl([["640x480", "640x480 · mais leve"], ["960x720", "960x720 · mais nítida"]], S.base.cam_res || "640x480", (v) => setBase("cam_res", v)),
+              "vale ao iniciar a simulação; 960x720 deixa a imagem mais nítida, mas a simulação mais pesada")
+          : h("span", { class: "small" }, "Esta tarefa usa a câmera padrão de 640x480."),
         h("span", { class: "small" }, "A visão do robô vem pela câmera (ZMQ) e aparece na tela de Operação.")),
       input, net, rec);
   } else {

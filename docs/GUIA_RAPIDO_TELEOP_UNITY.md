@@ -62,6 +62,10 @@ WebRTC passa todo pelo cabo — não depende da rede do evento.
   cilindro (Dex1, locomoção). Qualquer outra pode ser usada digitando o gym id em `--task`
   no Avançado; para deixá-la fixa na lista, adicione uma entrada em `TASK_PRESETS` em
   [gui/commands.py](../gui/commands.py) e reinicie a interface.
+- **Resolução da câmera:** em 3 Mesas e Mover cilindro, o campo Simulação escolhe 640x480
+  (padrão, mais leve) ou 960x720 (mais nítida, mas a simulação fica mais pesada) por olho.
+  Vale ao iniciar a simulação. Pelo terminal, use `SIM_HEAD_CAM_RES=960x720 python sim_main.py ...`. A tarefa Cilindro fica em
+  640x480.
 - **Na TV:** abra como aplicativo, sem barra de endereço (Alt+F4 fecha; `--kiosk` no lugar de
   `--app` abre em tela cheia):
   ```bash

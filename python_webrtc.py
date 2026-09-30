@@ -548,6 +548,8 @@ async def main():
     parser.add_argument("--video-max-width", type=int, default=None, help="Optional maximum video width for bandwidth-constrained links")
     parser.add_argument("--video-max-height", type=int, default=None, help="Optional maximum video height for bandwidth-constrained links")
     parser.add_argument("--video-codec", type=str, default="auto", choices=["auto", "h264", "vp8"], help="Preferred video codec for Unity delivery")
+    parser.add_argument("--video-bitrate", type=float, default=0.0,
+                        help="Teto da taxa de bits do vídeo em Mbps (0 = padrão do aiortc: VP8 até 1,5, H264 até 3)")
     parser.add_argument(
         "--ice-server",
         action="append",
@@ -563,6 +565,17 @@ async def main():
     args = parser.parse_args()
 
     log_messages = args.log_messages
+    if args.video_bitrate > 0:
+        # O aiortc limita o encoder a MIN..MAX_BITRATE (VP8: 0,25–1,5 Mbps; H264: 0,5–3 Mbps) e
+        # começa em DEFAULT_BITRATE; o controle de congestionamento do Quest ainda pode baixar
+        # até MIN. As constantes são lidas a cada ajuste, então basta trocá-las aqui.
+        from aiortc.codecs import vpx, h264
+        bps = int(args.video_bitrate * 1_000_000)
+        for codec in (vpx, h264):
+            codec.MAX_BITRATE = bps
+            codec.DEFAULT_BITRATE = bps
+            codec.MIN_BITRATE = min(codec.MIN_BITRATE, bps)
+        print(f"📶 Taxa de bits do vídeo: até {args.video_bitrate:g} Mbps")
     video_debug = args.video_debug
     video_codec = args.video_codec
     ice_host_override = args.ice_host

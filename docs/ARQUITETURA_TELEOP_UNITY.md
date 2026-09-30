@@ -223,7 +223,12 @@ chamando `await track.recv()`, codificando o quadro devolvido e mandando os paco
 
 ### 5.3 Estéreo, codec e resolução
 
-- A simulação publica o par binocular lado a lado (480×1280). Com `--stereo-video`, a trilha
+- A simulação publica o par binocular lado a lado. Cada olho tem 640×480 (padrão) ou 960×720,
+  escolhido ao iniciar a simulação pela variável `SIM_HEAD_CAM_RES` (lista na interface; vale
+  para 3 Mesas e Mover cilindro). O app Unity divide a imagem ao meio por proporção e a tela
+  curva tem formato fixo: qualquer resolução serve desde que cada olho seja 4:3. A ponte não lê
+  o `image_shape` do teleimager; manda cada quadro no tamanho em que chega.
+  Com `--stereo-video`, a trilha
   envia o par inteiro; sem ele, recorta o olho esquerdo. O botão do app manda
   `{"type":"stereo_vision","enabled":...}` e `set_stereo_mode` troca isso **ao vivo**,
   recortando os pixels no Python (o Unity sempre exibe o que chega).
@@ -231,6 +236,9 @@ chamando `await track.recv()`, codificando o quadro devolvido e mandando os paco
   Aplicado em `apply_video_codec_preferences` sobre o transceiver do vídeo.
 - `--video-max-width/--video-max-height` reduzem a resolução antes de codificar (enlaces
   fracos).
+- `--video-bitrate N` (Mbps) sobe o teto de taxa de bits do codificador do aiortc, que por
+  padrão é baixo e deixa a imagem borrada em movimento. A interface usa 8 Mbps; em Wi‑Fi
+  congestionado, 4–5.
 - RTP tolera perda: um pacote perdido estraga parte de um quadro; o fluxo continua.
 
 ---
@@ -366,12 +374,14 @@ Cliente WebSocket para `--forward-url` (`ws://127.0.0.1:9876`).
 |---|---|---|---|
 | **Wi‑Fi, mesma LAN** | `IP_PC:8765` no menu do app | UDP na LAN, candidatos `host` | **Validado.** Recomendado |
 | **Cabo USB + Wi‑Fi** | `adb reverse tcp:8765 tcp:8765`; app em `127.0.0.1:8765` | UDP **pelo Wi‑Fi** | Validado. O cabo carrega só a sinalização |
-| **Só cabo USB** | `adb reverse` | **não funciona** | `adb reverse` é só TCP; ICE e mídia são UDP |
+| **Só cabo USB (NCM)** | `IP_PC_no_cabo:8765` (ex.: `10.42.0.1`) | UDP pela rede do cabo | **Validado.** Quest em modo NCM (`adb shell svc usb setFunctions ncm`) + perfil `quest-usb` do NetworkManager (`ipv4.method shared`); PC `10.42.0.1`, Quest `10.42.0.x`. Não persiste: refazer após reiniciar o Quest. A interface mostra se está ativo |
+| **Só cabo USB (`adb reverse`)** | `adb reverse` | **não funciona** | `adb reverse` é só TCP; ICE e mídia são UDP |
 | **Redes diferentes (Tailscale)** | `ws://<IP_tailscale_PC>:8765` | UDP pelo túnel, `--ice-host <IP_tailscale_PC>` | Ver [TAILSCALE_DIAGNOSTICS.md](../TAILSCALE_DIAGNOSTICS.md); não validado aqui |
 | **Redes diferentes (NAT)** | 8765 exposto (IP público/túnel) | STUN (`srflx`) ou TURN (`relay`) | NAT restritivo exige TURN (`--turn-*` e campos `turnUrls` no app) |
 
-No cenário com cabo, a queda de sinalização por Wi‑Fi (seção 7.3) deixa de ser um risco,
-porque o TCP do 8765 passa pelo USB.
+Nos cenários com cabo, a queda de sinalização por Wi‑Fi (seção 7.3) deixa de ser um risco,
+porque o TCP do 8765 passa pelo USB. Com NCM, a mídia também passa pelo cabo: é o cenário
+mais estável para a demonstração.
 
 ---
 

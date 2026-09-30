@@ -354,6 +354,9 @@ class Dex1_1_Gripper_Controller:
         RIGHT_MAPPED_MAX = RIGHT_MAPPED_MIN + 5.40
         left_target_action  = (LEFT_MAPPED_MAX - LEFT_MAPPED_MIN) / 2.0
         right_target_action = (RIGHT_MAPPED_MAX - RIGHT_MAPPED_MIN) / 2.0
+        # 0.0 is both "no data yet" and "fully pressed": once real input arrives, keep updating
+        # even when both values are 0.0 (both triggers fully pressed)
+        input_ready = False
 
         dq = 0.0
         tau = 0.0
@@ -386,6 +389,8 @@ class Dex1_1_Gripper_Controller:
                 dual_gripper_state = np.array([left_gripper_state_value.value, right_gripper_state_value.value])
                 
                 if left_gripper_value != 0.0 or right_gripper_value != 0.0: # if input data has been initialized.
+                    input_ready = True
+                if input_ready:
                     # Linear mapping from [0, THUMB_INDEX_DISTANCE_MAX] to gripper action range
                     left_target_action  = np.interp(left_gripper_value, [THUMB_INDEX_DISTANCE_MIN, THUMB_INDEX_DISTANCE_MAX], [LEFT_MAPPED_MIN, LEFT_MAPPED_MAX])
                     right_target_action = np.interp(right_gripper_value, [THUMB_INDEX_DISTANCE_MIN, THUMB_INDEX_DISTANCE_MAX], [RIGHT_MAPPED_MIN, RIGHT_MAPPED_MAX])

@@ -35,6 +35,25 @@ Abra `http://localhost:8080` (F11 para tela cheia na TV). Não precisa de intern
 5. **Gravações:** lista os episódios, com player das imagens, gráficos e o botão
    **Replay determinístico no Isaac** (encerre a sessão antes).
 
+**Conexão do Quest pelo cabo USB (sem Wi‑Fi)**
+
+O Quest 3 transforma a porta USB numa placa de rede (modo NCM). O PC entrega IP a ele e o
+WebRTC passa todo pelo cabo — não depende da rede do evento.
+
+- **Uma vez no PC** (cria o perfil de rede que distribui IP no cabo):
+  ```bash
+  nmcli connection add type ethernet con-name quest-usb match.driver cdc_ncm \
+    ipv4.method shared ipv6.method disabled connection.autoconnect-priority 10
+  ```
+- **A cada sessão:** com o Quest no cabo e a depuração USB autorizada, clique em
+  **Ativar cabo USB** (em Configurar sessão → Rede e vídeo). A interface liga o modo NCM,
+  espera o Quest pegar IP e seleciona `10.42.0.1` como IP do PC. No app: `10.42.0.1:8765`.
+- O indicador mostra se o cabo está ativo e o topo mostra **Quest · cabo** ou **Quest · Wi‑Fi**;
+  na operação, o painel do Quest mostra o caminho em uso.
+- O modo cabo **não fica salvo**: reiniciar o óculos ou reconectar o cabo desliga. A troca de
+  modo pede de novo a autorização de depuração USB no óculos.
+- Pelo terminal: `adb shell svc usb setFunctions ncm` (desfazer: `adb shell svc usb setFunctions`).
+
 **Dicas**
 
 - **Teclado:** com a janela da interface em foco, **R** inicia, **S** grava/salva e **Q**

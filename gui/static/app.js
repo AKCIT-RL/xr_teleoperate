@@ -82,6 +82,8 @@ async function init() {
   connectWS();
   setInterval(() => { if (!anyRunning() && S.view === "op") runChecks(true); }, 10000);
   setInterval(tick, 1000);
+  pollUsb();
+  setInterval(pollUsb, 4000);
 }
 
 function bindStatic() {
@@ -167,7 +169,7 @@ function selectEl(options, value, onchange, attrs = {}) {
   return sel;
 }
 function ifaceOptions(emptyText) {
-  const opts = S.interfaces.map((i) => [i.ip, `${i.name} · ${i.ip}`]);
+  const opts = S.interfaces.map((i) => [i.ip, `${i.name} · ${i.ip}${i.usb ? " (cabo USB)" : ""}`]);
   if (emptyText) opts.unshift(["", emptyText]);
   return opts;
 }
@@ -180,8 +182,9 @@ function renderConfigFields() {
   const controller = S.base.input_mode === "controller";
 
   const questSel = selectEl(ifaceOptions("— escolha —"), S.base.quest_ip, (v) => setBase("quest_ip", v));
-  const net = h("fieldset", {}, h("legend", {}, real ? "Rede do Quest (Wi‑Fi)" : "Rede e vídeo"),
+  const net = h("fieldset", {}, h("legend", {}, real ? "Rede do Quest (Wi‑Fi ou cabo)" : "Rede e vídeo"),
     field("IP do PC (o Quest conecta aqui)", questSel, `No app: ${S.base.quest_ip || "?"}:8765 · vira --ice-host`),
+    h("div", { id: "usb-box", class: "usb-box" }),
     checkbox("Vídeo estéreo para o Quest", "stereo"));
 
   const input = h("fieldset", {}, h("legend", {}, "Entrada do operador"),
@@ -221,6 +224,65 @@ function renderConfigFields() {
   }
   $("cfg-real-banner").classList.toggle("hidden", !real);
   renderSafetyInConfig();
+  renderUsb(true);
+}
+
+// ---------- rede pelo cabo USB (Quest em modo NCM) ----------
+const usbSelected = () => !!(S.usb && S.usb.pc_ip && S.base.quest_ip === S.usb.pc_ip);
+
+async function pollUsb() {
+  try { S.usb = await api("/api/usb-network"); } catch (_) { return; }
+  if (S.usb.pc_ip && !S.interfaces.some((i) => i.ip === S.usb.pc_ip)) {
+    // a placa do cabo acabou de aparecer: atualiza a lista de IPs
+    try { S.interfaces = (await api("/api/schema")).interfaces; renderConfigFields(); } catch (_) {}
+  }
+  renderUsb();
+  if (!$("live").classList.contains("hidden")) { renderQuest(); renderTop(); }
+}
+
+async function enableUsb() {
+  S.usbBusy = true; S.usbMsg = null; renderUsb(true);
+  try {
+    const r = await api("/api/usb-network/enable", {});
+    S.usb = r.status; S.usbMsg = { ok: r.ok, text: r.msg };
+    if (r.ok && r.status.pc_ip) {
+      S.interfaces = (await api("/api/schema")).interfaces;
+      S.base.quest_ip = r.status.pc_ip; saveBase(); refreshPreview(); renderConfigFields();
+    }
+  } catch (e) { S.usbMsg = { ok: false, text: e.message }; }
+  S.usbBusy = false; renderUsb(true); renderAll();
+}
+
+function renderUsb(force) {
+  const box = $("usb-box");
+  if (!box) return;
+  const u = S.usb || {};
+  const sig = [u.active, u.pc_ip, u.quest_ip, u.adb, u.profile, S.usbBusy, S.usbMsg, S.base.quest_ip];
+  if (!force && !changed(box, sig)) return;
+  box.dataset.sig = JSON.stringify(sig);
+  box.innerHTML = "";
+  const dot = u.active ? "ok" : S.usbBusy ? "busy" : "";
+  const status = u.active ? `Cabo USB ativo · PC ${u.pc_ip} · Quest ${u.quest_ip}`
+    : u.pc_ip ? `Placa do cabo presente (${u.pc_ip}), Quest ainda sem IP`
+    : "Cabo USB inativo";
+  box.append(h("div", { class: "usb-row" }, h("span", { class: `dot ${dot}` }), h("span", {}, status)));
+  const btns = h("div", { class: "usb-row" });
+  if (!u.active) {
+    btns.append(h("button", { class: "btn", style: "height:38px", disabled: S.usbBusy || anyRunning(), onclick: enableUsb },
+      S.usbBusy ? "Ativando… (até 30 s)" : "Ativar cabo USB"));
+  } else if (!usbSelected()) {
+    btns.append(h("button", { class: "btn", style: "height:38px", disabled: anyRunning(),
+      onclick: () => { setBase("quest_ip", u.pc_ip); } }, "Usar o cabo nesta sessão"));
+  } else {
+    btns.append(h("span", { class: "small okt" }, "Sessão configurada para o cabo."));
+  }
+  box.append(btns);
+  const notes = [];
+  if (S.usbMsg) notes.push(h("div", { class: S.usbMsg.ok ? "small okt" : "small badt" }, S.usbMsg.text));
+  if (!u.profile && S.usb) notes.push(h("div", { class: "small" }, "Perfil de rede do PC ausente. Rode uma vez: ", h("span", { class: "mono" }, u.profile_cmd)));
+  if (!u.active && u.adb && u.adb !== "device") notes.push(h("div", { class: "small" }, `adb: ${u.adb}` + (u.adb === "unauthorized" ? " — autorize a depuração USB no óculos." : "")));
+  if (u.active) notes.push(h("div", { class: "small" }, `No app: ${u.pc_ip}:8765. Reiniciar o óculos ou reconectar o cabo desliga o modo cabo.`));
+  box.append(...notes);
 }
 
 function renderSafetyInConfig() {
@@ -429,7 +491,8 @@ function renderTop() {
   if (!isReal()) items.push(["Simulação", dotClass(proc("sim").state)]);
   else items.push(["Câmera do robô", (srv().video || {}).live ? "ok" : ""]);
   items.push(["Ponte", dotClass(proc("bridge").state)]);
-  items.push(["Quest", questConnected() ? "ok" : ""]);
+  items.push([usbSelected() ? "Quest · cabo" : "Quest · Wi‑Fi",
+    questConnected() ? "ok" : (usbSelected() && S.usb && !S.usb.active ? "err" : "")]);
   items.push([ipc.recording ? "Teleop · gravando" : ipc.start ? "Teleop · teleoperando" : "Teleop", ipc.recording ? "rec" : dotClass(proc("teleop").state)]);
   for (const [t, c] of items) dots.append(h("div", { class: "dotitem" }, h("span", { class: `dot ${c}` }), t));
 }
@@ -565,8 +628,13 @@ function renderQuest() {
   box.innerHTML = "";
   const f = proc("bridge").flags || {};
   // estatísticas de mensagens aparecem no subtítulo da ponte; ligação ponte→teleop no do teleop
+  const u = S.usb || {};
+  const via = usbSelected()
+    ? (u.active ? h("span", { class: "okt" }, "cabo USB") : h("span", { class: "badt" }, "cabo USB — inativo!"))
+    : "Wi‑Fi";
   const rows = [
     ["Endereço no app", h("span", { class: "mono" }, `${S.base.quest_ip || "?"}:8765`)],
+    ["Caminho", via],
     ["Estado", f.quest_connected ? h("span", { class: "okt" }, "conectado") : f.quest_signaling ? "negociando…" : "aguardando o app"],
   ];
   for (const [k, v] of rows) box.append(h("div", { class: "kv" }, h("span", {}, k), h("span", {}, v)));

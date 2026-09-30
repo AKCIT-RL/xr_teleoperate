@@ -200,6 +200,12 @@ class App:
         entries = [e for e in self.procs[name].logs.snapshot() if order.index(e["level"]) >= order.index(level)]
         return web.json_response({"entries": entries[-int(request.query.get("n", "200")):]})
 
+    async def api_usb_status(self, request):
+        return web.json_response(await checks.usb_network_status())
+
+    async def api_usb_enable(self, request):
+        return web.json_response(await checks.usb_network_enable())
+
     async def api_teleop_cmd(self, request):
         return web.json_response(await self.ipc.send(request.match_info["cmd"]))
 
@@ -293,6 +299,8 @@ def make_app() -> web.Application:
     r.add_get("/api/state", core.api_state)
     r.add_get("/api/logs/{name}", core.api_logs)
     r.add_post("/api/teleop/{cmd}", core.api_teleop_cmd)
+    r.add_get("/api/usb-network", core.api_usb_status)
+    r.add_post("/api/usb-network/enable", core.api_usb_enable)
     r.add_get("/api/cam-config", core.api_cam_config)
     r.add_get("/api/recordings", core.api_recordings)
     r.add_get("/api/recordings/{task}/{episode}/series", core.api_recording_series)
